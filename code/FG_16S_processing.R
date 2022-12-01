@@ -7,6 +7,8 @@
 library(dada2)
 packageVersion("dada2")
 
+install.packages("Biostrings")
+
 #### 1) Set working directory ####
 path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Faville_Grove_prj/Faville_Grove_Seqs_2022/Faville_Grove_16S_seqs_2022"
 list.files(path)
@@ -36,7 +38,21 @@ plotQualityProfile(REV_reads[3:6])
 # dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
 # Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296 
 
-#### 4) Filter and Trim ####
+#### 4) Check for primers on the sequences ####
+FWD_primer <- "GTGYCAGCMGCCGCGGTAA"
+REV_primer <- "GGACTACNVGGGTWTCTAA"
+
+allOrients <- function(primer) {
+  # Create all orientations of the input sequence
+  require(Biostrings)
+  dna <- DNAString(primer)  # The Biostrings works w/ DNAString objects rather than character vectors
+  orients <- c(Forward = dna, Complement = complement(dna), Reverse = reverse(dna), 
+               RevComp = reverseComplement(dna))
+  return(sapply(orients, toString))  # Convert back to character vector
+}
+
+
+#### 5) Filter and Trim ####
 # For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Note that the primers are still are on the forward & reverse reads, so we remove them with the trimLeft parameter(length of FWD primer, length of REV primer). We used the 341 forward primer: CCTACGGGNGGCWGCAG (17 bp in length) & 785 reverse primer: GACTACHVGGGTATCTAATCC (21 bps in length).
 filt_FWD <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.gz"))
 filt_REV <- file.path(path, "filtered", paste0(sample.names, "_R_filtered.fastq.gz"))
