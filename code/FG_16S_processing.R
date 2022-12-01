@@ -4,10 +4,14 @@
 
 (.packages())
 
+install.packages("BiocManager")
+library(BiocManager)
+
+BiocManager::install("Biostrings")
+library(Biostrings)
+
 library(dada2)
 packageVersion("dada2")
-
-install.packages("Biostrings")
 
 #### 1) Set working directory ####
 path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Faville_Grove_prj/Faville_Grove_Seqs_2022/Faville_Grove_16S_seqs_2022"
