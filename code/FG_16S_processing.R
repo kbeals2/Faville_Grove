@@ -92,11 +92,11 @@ out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 
 
 #### 6) Inspect read quality profiles after trimming ####
 plotQualityProfile(filt_FWD[1:4])
-plotQualityProfile(filt_REV[54:57])
+plotQualityProfile(filt_REV[1:4])
 
 
 #### 7) Learn the error rates ####
-# Learn the sequence error rates and correct for these in the later steps of the pipeline
-err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # forward filtered reads
-err_REV <- learnErrors(filt_REV, multithread = TRUE) # reverse filtered reads
+# Use the filtered reads to learn the sequence error rates and correct for these in the later steps of the pipeline
+err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 11 min
+err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 16 min
 
