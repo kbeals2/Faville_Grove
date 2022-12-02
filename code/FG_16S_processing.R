@@ -17,9 +17,6 @@ library(dada2)
 packageVersion("dada2")
 
 #### 1) Set working directory ####
-path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Faville_Grove_prj/Faville_Grove_Seqs_2022/Faville_Grove_16S_seqs_2022"
-list.files(path)
-
 path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data/Microbial_Seqs_2022/FG_16S_seqs_2022"
 list.files(path)
 
@@ -32,10 +29,10 @@ REV_reads <- sort(list.files(path, pattern ="_R2.fastq.gz", full.names = TRUE))
 
 
 #### 3) Inspect read quality profiles ####
-plotQualityProfile(FWD_reads[3:6])
+plotQualityProfile(FWD_reads[1:4])
 # Quality doesn't drop below q30; no need to truncate heavily
 
-plotQualityProfile(REV_reads[3:6])
+plotQualityProfile(REV_reads[1:4])
 # Quality doesn't drop below q30; no need to truncate heavily
 
 
@@ -60,16 +57,16 @@ FWD_filtN <- file.path(path, "filtN", basename(FWD_reads)) # Put N-filterd files
 REV_filtN <- file.path(path, "filtN", basename(REV_reads))
 filterAndTrim(FWD_reads, FWD_filtN, REV_reads, REV_filtN, maxN = 0, multithread = TRUE)
 
-# Now count the number of times the primers appear in the forward and reverse read, while considering all possible primer orientations. It's not necessary to check the presence of the primers on all the samples, so we'll check a few samples randomly. Remember that the first two samples are blanks. 
+# Now count the number of times the primers appear in the forward and reverse read, while considering all possible primer orientations. It's not necessary to check the presence of the primers on all the samples, so we'll check a few samples randomly.
 primerHits <- function(primer, fn) {
   # Counts number of reads in which the primer is found
   nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
   return(sum(nhits > 0))
 }
-rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[3]]), 
-      FWD_ReverseReads = sapply(FWD_orients, primerHits, fn = REV_filtN[[3]]), 
-      REV_ForwardReads = sapply(REV_orients, primerHits, fn = FWD_filtN[[3]]), 
-      REV_ReverseReads = sapply(REV_orients, primerHits, fn = REV_filtN[[3]]))
+rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]), 
+      FWD_ReverseReads = sapply(FWD_orients, primerHits, fn = REV_filtN[[1]]), 
+      REV_ForwardReads = sapply(REV_orients, primerHits, fn = FWD_filtN[[1]]), 
+      REV_ReverseReads = sapply(REV_orients, primerHits, fn = REV_filtN[[1]]))
 
 # As expected, the FWD primer is found in the FWD reads in its forward orientation and on the REV reads in its reverse complement orientation. The REV primer is found in the REV reads in its forward orientation and on the FWD reads in its reverse complement orientation. 
 
@@ -91,4 +88,15 @@ names(filt_REV) <- sample.names
 out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(148, 148),
                      maxN = 0, maxEE = c(2,5), truncQ = 2, rm.phix = TRUE,
                      compress = TRUE, multithread = TRUE, verbose = TRUE)
+
+
+#### 6) Inspect read quality profiles after trimming ####
+plotQualityProfile(filt_FWD[1:4])
+plotQualityProfile(filt_REV[54:57])
+
+
+#### 7) Learn the error rates ####
+# Learn the sequence error rates and correct for these in the later steps of the pipeline
+err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # forward filtered reads
+err_REV <- learnErrors(filt_REV, multithread = TRUE) # reverse filtered reads
 
