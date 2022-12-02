@@ -10,6 +10,9 @@ library(BiocManager)
 BiocManager::install("Biostrings")
 library(Biostrings)
 
+BiocManager::install("ShortRead")
+library(ShortRead)
+
 library(dada2)
 packageVersion("dada2")
 
@@ -35,12 +38,6 @@ plotQualityProfile(FWD_reads[3:6])
 plotQualityProfile(REV_reads[3:6])
 # Quality doesn't drop below q30; no need to truncate heavily
 
-# F primer: GTGYCAGCMGCCGCGGTAA (spans base positions 515-533)
-# R primer: GGACTACNVGGGTWTCTAA (spans base positions 806-824)
-# Target amplicon sequence is 274 bps in length (806-533 + 1)
-# We have 300 bps of length with the F & R reads combined (150 bps each), so 300 bps - 274 (target amplicon length) = 26 bps of overlap
-# dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
-# Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296 
 
 #### 4) Check for primers on the sequences ####
 FWD_primer <- "GTGYCAGCMGCCGCGGTAA"
@@ -54,6 +51,35 @@ allOrients <- function(primer) {
                RevComp = reverseComplement(dna))
   return(sapply(orients, toString))  # Convert back to character vector
 }
+
+(FWD_orients <- allOrients(FWD_primer))
+(REV_orients <- allOrients(REV_primer))
+
+# The presence of ambiguous bases (Ns) in the sequencing reads makes accurate mapping of short primer sequences difficult. We are going to “pre-filter” the sequences just to remove those with Ns.
+FWD_filtN <- file.path(path, "filtN", basename(FWD_reads)) # Put N-filterd files in filtered/ subdirectory
+REV_filtN <- file.path(path, "filtN", basename(REV_reads))
+filterAndTrim(FWD_reads, FWD_filtN, REV_reads, REV_filtN, maxN = 0, multithread = TRUE)
+
+# Now count the number of times the primers appear in the forward and reverse read, while considering all possible primer orientations. It's not necessary to check the presence of the primers on all the samples, so we'll check a few samples randomly. Remember that the first two samples are blanks. 
+primerHits <- function(primer, fn) {
+  # Counts number of reads in which the primer is found
+  nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+  return(sum(nhits > 0))
+}
+rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[3]]), 
+      FWD_ReverseReads = sapply(FWD_orients, primerHits, fn = REV_filtN[[3]]), 
+      REV_ForwardReads = sapply(REV_orients, primerHits, fn = FWD_filtN[[3]]), 
+      REV_ReverseReads = sapply(REV_orients, primerHits, fn = REV_filtN[[3]]))
+
+# As expected, the FWD primer is found in the FWD reads in its forward orientation and on the REV reads in its reverse complement orientation. The REV primer is found in the REV reads in its forward orientation and on the FWD reads in its reverse complement orientation. 
+
+## Before the filter and trim step, need to do some basic math to determine the truncation parameters
+# F primer: GTGYCAGCMGCCGCGGTAA (spans base positions 515-533)
+# R primer: GGACTACNVGGGTWTCTAA (spans base positions 806-824)
+# Target amplicon sequence is 274 bps in length (806-533 + 1)
+# We have 300 bps of length with the F & R reads combined (150 bps each), so 300 bps - 274 (target amplicon length) = 26 bps of overlap
+# dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
+# Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296 
 
 
 #### 5) Filter and Trim ####
