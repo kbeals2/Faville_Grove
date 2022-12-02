@@ -79,11 +79,11 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[3]]),
 # Target amplicon sequence is 274 bps in length (806-533 + 1)
 # We have 300 bps of length with the F & R reads combined (150 bps each), so 300 bps - 274 (target amplicon length) = 26 bps of overlap
 # dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
-# Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296 
+# Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296, which surpasses the 289 threshold.
 
 
 #### 5) Filter and Trim ####
-# For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Note that the primers are still are on the forward & reverse reads, so we remove them with the trimLeft parameter(length of FWD primer, length of REV primer). We used the 341 forward primer: CCTACGGGNGGCWGCAG (17 bp in length) & 785 reverse primer: GACTACHVGGGTATCTAATCC (21 bps in length).
+# For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Note that the primers are still on the FWD & REV reads, so we remove them with the trimLeft parameter(length of FWD primer = 19 bases, length of REV primer = 19 bases).
 filt_FWD <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.gz"))
 filt_REV <- file.path(path, "filtered", paste0(sample.names, "_R_filtered.fastq.gz"))
 names(filt_FWD) <- sample.names
@@ -91,3 +91,4 @@ names(filt_REV) <- sample.names
 out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(148, 148),
                      maxN = 0, maxEE = c(2,5), truncQ = 2, rm.phix = TRUE,
                      compress = TRUE, multithread = TRUE, verbose = TRUE)
+
