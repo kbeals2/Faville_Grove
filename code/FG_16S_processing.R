@@ -76,7 +76,7 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]),
 # Target amplicon sequence is 274 bps in length (806-533 + 1)
 # We have 300 bps of length with the F & R reads combined (150 bps each), so 300 bps - 274 (target amplicon length) = 26 bps of overlap
 # dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
-# Ben Callahan recommends adding 15 bases to the length of the target amplicon; truncation lengths of F & R reads should sum to this number, as a minimum: 274 + 15 = 289; If I truncate to 148 bases on both F & R reads, that sums to 296, which surpasses the 289 threshold.
+# Ben Callahan recommends that the sum of the truncated FWD & REV reads should be 20 bases longer than the length of the sequenced amplicon. If the reads are truncated to 149 bases each, that sums to 298 bases. 274 bases (length of the amplicon) + 20 = 294.
 
 
 #### 5) Filter and Trim ####
@@ -85,7 +85,7 @@ filt_FWD <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.
 filt_REV <- file.path(path, "filtered", paste0(sample.names, "_R_filtered.fastq.gz"))
 names(filt_FWD) <- sample.names
 names(filt_REV) <- sample.names
-out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(148, 148),
+out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(149, 149),
                      maxN = 0, maxEE = c(2,5), truncQ = 2, rm.phix = TRUE,
                      compress = TRUE, multithread = TRUE, verbose = TRUE)
 
@@ -100,3 +100,20 @@ plotQualityProfile(filt_REV[1:4])
 err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 11 min
 err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 16 min
 
+# Visualize the estimated error rates as a sanity check
+# red line = expected error rate based on quality score (note that this decreases as the quality increases)
+# black line = estimated error rate after convergence of the machine-learning algorithm
+# black dots = observed error frequency in our samples
+# black dots should align with black line
+plotErrors(err_FWD, nominalQ = TRUE) 
+plotErrors(err_REV, nominalQ = TRUE)
+
+
+#### 8) Sample inference ####
+# his algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants
+dadaFs <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo")
+dadaRs <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo")
+
+
+#### 9) Merge paired reads ####
+mergers <- mergePairs(dadaFs, filt_FWD, dadaRs, filt_REV, verbose = TRUE)
