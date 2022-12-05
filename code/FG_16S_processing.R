@@ -73,6 +73,11 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]),
 ## Before the filter and trim step, need to do some basic math to determine the truncation parameters
 # F primer: GTGYCAGCMGCCGCGGTAA (spans base positions 515-533)
 # R primer: GGACTACNVGGGTWTCTAA (spans base positions 806-824)
+# dada2's default mergePairs command requires a minimum of 12 bases of overlap. To calculate the overlap that we have with our sequences, subtract the target amplicon length from the sum of the truncated FWD & REV reads. 
+# The FWD primer starts at base position 515 and the REV primer starts at base position 806. Since the REV primer is read from right to left, subtract the start of the FWD primer from the start of REV primer. The length of the target amplicon is 806 - 515 + 1 = 292 bases.
+# Since the FWD and REV reads are great quality, they don't need to be truncated at all, so both reads will stay at 150 bases in length. The FWD and REV reads together sum to 300 bases in length. 300 bases - 292 bases (length of target amplicon) is only 8 bases, which is less than the default parameter of 12 bases of overlap needed to merge FWD and REV reads. We can change the overlap parameter in the mergePairs step later in the pipeline.
+
+### PREVIOUS RATIONALE (incorrect)
 # Target amplicon sequence is 274 bps in length (806-533 + 1)
 # We have 300 bps of length with the F & R reads combined (150 bps each), so 300 bps - 274 (target amplicon length) = 26 bps of overlap
 # dada2's mergePairs command needs at least 12 bases to be overlapping, but let's say 20 to be conservative. So, 26-20 = 6; 6 divided by 2 = 3 bps could be trimmed from each F & R read
@@ -110,10 +115,12 @@ plotErrors(err_REV, nominalQ = TRUE)
 
 
 #### 8) Sample inference ####
-# his algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants
+# This algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants
 dadaFs <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo")
 dadaRs <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo")
 
 
 #### 9) Merge paired reads ####
-mergers <- mergePairs(dadaFs, filt_FWD, dadaRs, filt_REV, verbose = TRUE)
+# Since we don't have enough overlap to meet the required minimum of 12 bases of overlap (see notes before Step 5), we can lower the minimum overlap with the parameter minOverlap = .  
+mergers <- mergePairs(dadaFs, filt_FWD, dadaRs, filt_REV, verbose = TRUE, minOverlap = 5)
+
