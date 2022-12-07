@@ -76,6 +76,7 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]),
 # dada2's default mergePairs command requires a minimum of 12 bases of overlap. To calculate the overlap that we have with our sequences, subtract the target amplicon length from the sum of the truncated FWD & REV reads. 
 # The FWD primer starts at base position 515 and the REV primer starts at base position 806. Since the REV primer is read from right to left, subtract the start of the FWD primer from the start of REV primer. The length of the target amplicon is 806 - 515 + 1 = 292 bases.
 # Since the FWD and REV reads are great quality, they don't need to be truncated at all, so both reads will stay at 150 bases in length. The FWD and REV reads together sum to 300 bases in length. 300 bases - 292 bases (length of target amplicon) is only 8 bases, which is less than the default parameter of 12 bases of overlap needed to merge FWD and REV reads. We can change the overlap parameter in the mergePairs step later in the pipeline.
+# Helpful dada2 support issue: https://github.com/benjjneb/dada2/issues/425
 
 ### PREVIOUS RATIONALE (incorrect)
 # Target amplicon sequence is 274 bps in length (806-533 + 1)
@@ -85,12 +86,12 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]),
 
 
 #### 5) Filter and Trim ####
-# For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Note that the primers are still on the FWD & REV reads, so we remove them with the trimLeft parameter(length of FWD primer = 19 bases, length of REV primer = 19 bases).
+# For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Note that the primers are still on the FWD & REV reads, so we remove them with the trimLeft parameter(length of FWD primer = 19 bases, length of REV primer = 19 bases). The reads are in great quality so we don't need to truncate them less than their length of 150 bases.
 filt_FWD <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.gz"))
 filt_REV <- file.path(path, "filtered", paste0(sample.names, "_R_filtered.fastq.gz"))
 names(filt_FWD) <- sample.names
 names(filt_REV) <- sample.names
-out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(149, 149),
+out <- filterAndTrim(FWD_reads, filt_FWD, REV_reads, filt_REV, trimLeft = c(19, 19), truncLen = c(150, 150),
                      maxN = 0, maxEE = c(2,5), truncQ = 2, rm.phix = TRUE,
                      compress = TRUE, multithread = TRUE, verbose = TRUE)
 
@@ -102,8 +103,8 @@ plotQualityProfile(filt_REV[1:4])
 
 #### 7) Learn the error rates ####
 # Use the filtered reads to learn the sequence error rates and correct for these in the later steps of the pipeline
-err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 11 min
-err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 16 min
+err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 14 min
+err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 17 min
 
 # Visualize the estimated error rates as a sanity check
 # red line = expected error rate based on quality score (note that this decreases as the quality increases)
@@ -115,12 +116,39 @@ plotErrors(err_REV, nominalQ = TRUE)
 
 
 #### 8) Sample inference ####
-# This algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants
-dadaFs <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo")
-dadaRs <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo")
+# This algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants.
+dada_FWD <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo")
+dada_REV <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo")
 
 
 #### 9) Merge paired reads ####
 # Since we don't have enough overlap to meet the required minimum of 12 bases of overlap (see notes before Step 5), we can lower the minimum overlap with the parameter minOverlap = .  
-mergers <- mergePairs(dadaFs, filt_FWD, dadaRs, filt_REV, verbose = TRUE, minOverlap = 5)
+mergers <- mergePairs(dada_FWD, filt_FWD, dada_REV, filt_REV, verbose = TRUE, minOverlap = 5)
 
+
+#### 10) Construct a sequence table ####
+bact_seq_table <- makeSequenceTable(mergers)
+dim(bact_seq_table) 
+# (number of samples, number of amplicon sequence variants ASVs) (found _____ ASVs across the 57 samples)
+
+
+#### 11) Remove chimeras ####
+bact_seq_table_nochim <- removeBimeraDenovo(bact_seq_table, method = "consensus", multithread = TRUE, verbose = TRUE)
+# found ____ chimeras out of ____ sequences (__% identified as chimeric)
+
+# We don't know if these chimeras held a lot in terms of abundance. To find out, we can calculate the proportion of sequences retained after chimeras removed.
+sum(bact_seq_table_nochim)/sum(bact_seq_table)
+# We retained ___% of sequence abundance. Great!
+
+
+#### 12) Track reads through the pipeline to verify everything worked as expected ####
+getN <- function(x) sum(getUniques(x))
+(summary_table <- data.frame(row.names = sample.names, 
+                             input = out[, 1],
+                             filtered = out[, 2], 
+                             denoised_FWD = sapply(dada_FWD, getN),
+                             denoised_REV = sapply(dada_REV, getN), 
+                             merged = sapply(mergers, getN),
+                             non_chim = rowSums(bact_seq_table_nochim), 
+                             final_perc_reads_retained = round(rowSums(bact_seq_table_nochim)/out[, 1]*100, 1)))
+# Looks good! The most amount of reads were removed during filtering, as expected. On average, retained __% of reads.
