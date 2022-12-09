@@ -2,6 +2,8 @@
 # Soil samples collected from Faville Prairie (remnant) and Tillotson Prairie (restoration) in summer 2022
 # Used the Earth Microbiome Project primers: 515F/806R
 
+
+# Installing via Bioconductor
 (.packages())
 
 install.packages("BiocManager")
@@ -16,9 +18,24 @@ library(ShortRead)
 library(dada2)
 packageVersion("dada2")
 
+
+# Installing via devtools (necessary when using with AWS RStudio AMI)
+devtools::install_github("benjjneb/dada2", ref = "v1.18") # note that the AMI created by Louis Aslett is R version 4.0, and the more recent versions of dada2 only work with R 4.2. So we install an earlier version of dada2 here when connecting through AWS AMI
+
+library(dada2)
+
+# Link Dropbox where sequences are stored
+library("RStudioAMI")
+linkDropbox()
+excludeSyncDropbox("*")
+includeSyncDropbox("SDSU")
+
+
 #### 1) Set working directory ####
 path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data/Microbial_Seqs_2022/FG_16S_seqs_2022"
 list.files(path)
+
+path <- "/home/rstudio/Dropbox/SDSU/Faville_Grove_microbial_sequences_2022/16S_seqs_2022"
 
 #### 2) Combine all forward and reverse reads. Forward and reverse fastq filenames have format: SAMPLENAME_R1.fastq.gz and SAMPLENAME_R2.fastq.gz ####
 FWD_reads <- sort(list.files(path, pattern ="_R1.fastq.gz", full.names = TRUE))
@@ -30,10 +47,10 @@ REV_reads <- sort(list.files(path, pattern ="_R2.fastq.gz", full.names = TRUE))
 
 #### 3) Inspect read quality profiles ####
 plotQualityProfile(FWD_reads[1:4])
-# Quality doesn't drop below q30; no need to truncate heavily
+# Quality doesn't drop below q30; no need to truncate
 
 plotQualityProfile(REV_reads[1:4])
-# Quality doesn't drop below q30; no need to truncate heavily
+# Quality doesn't drop below q30; no need to truncate
 
 
 #### 4) Check for primers on the sequences ####
@@ -103,8 +120,8 @@ plotQualityProfile(filt_REV[1:4])
 
 #### 7) Learn the error rates ####
 # Use the filtered reads to learn the sequence error rates and correct for these in the later steps of the pipeline
-err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 14 min
-err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 17 min
+err_FWD <- learnErrors(filt_FWD, multithread = TRUE) # took ~ 10 min using AWS AMI
+err_REV <- learnErrors(filt_REV, multithread = TRUE) # took ~ 15 min using AWS AMI
 
 # Visualize the estimated error rates as a sanity check
 # red line = expected error rate based on quality score (note that this decreases as the quality increases)
@@ -117,22 +134,22 @@ plotErrors(err_REV, nominalQ = TRUE)
 
 #### 8) Sample inference ####
 # This algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants.
-dada_FWD <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo")
-dada_REV <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo")
+dada_FWD <- dada(filt_FWD, err = err_FWD, multithread = TRUE, pool = "pseudo") # took ~ 30 min
+dada_REV <- dada(filt_REV, err = err_REV, multithread = TRUE, pool = "pseudo") # took ~ 32 min
 
 
 #### 9) Merge paired reads ####
 # Since we don't have enough overlap to meet the required minimum of 12 bases of overlap (see notes before Step 5), we can lower the minimum overlap with the parameter minOverlap = .  
 mergers <- mergePairs(dada_FWD, filt_FWD, dada_REV, filt_REV, verbose = TRUE, minOverlap = 5)
-
+# On average, 92.8% merge success rate across samples
 
 #### 10) Construct a sequence table ####
 bact_seq_table <- makeSequenceTable(mergers)
 dim(bact_seq_table) 
-# (number of samples, number of amplicon sequence variants ASVs) (found _____ ASVs across the 57 samples)
+# (number of samples, number of amplicon sequence variants ASVs) (found 54,916 ASVs across the 57 samples)
 
 
-#### 11) Remove chimeras ####
+#### 11) Remove chimeras ###
 bact_seq_table_nochim <- removeBimeraDenovo(bact_seq_table, method = "consensus", multithread = TRUE, verbose = TRUE)
 # found ____ chimeras out of ____ sequences (__% identified as chimeric)
 
@@ -152,3 +169,22 @@ getN <- function(x) sum(getUniques(x))
                              non_chim = rowSums(bact_seq_table_nochim), 
                              final_perc_reads_retained = round(rowSums(bact_seq_table_nochim)/out[, 1]*100, 1)))
 # Looks good! The most amount of reads were removed during filtering, as expected. On average, retained __% of reads.
+
+
+#### 13) Make summary tables that can be used to assign taxonomy
+# give seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs <- colnames(bact_seq_table_nochim)
+asv_headers <- vector(dim(bact_seq_table_nochim)[2], mode = "character")
+
+for (i in 1:dim(bact_seq_table_nochim)[2]) {
+  asv_headers[i] <- paste(">ASV", i, sep = "_")
+}
+
+# make a fasta file of the final ASV seqs (once this is made, upload to rdp.cme.msu.edu/classifier/classifier.jsp)
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "/home/rstudio/Dropbox/SDSU/FG_2022_Bact_ASV.fa")
+
+# make count table
+asv_table <- t(bact_seq_table_nochim)
+row.names(asv_table) <- sub(">", "", asv_headers)
+write.table(asv_table, "FG_2022_Bact_ASV_counts.tsv", sep = "\t", quote = F, col.names = NA)
