@@ -20,6 +20,9 @@ packageVersion("dada2")
 
 
 # Installing via devtools (necessary when using with AWS RStudio AMI)
+install.packages("devtools")
+library(devtools)
+
 devtools::install_github("benjjneb/dada2", ref = "v1.18") # note that the AMI created by Louis Aslett is R version 4.0, and the more recent versions of dada2 only work with R 4.2. So we install an earlier version of dada2 here when connecting through AWS AMI
 
 library(dada2)
@@ -32,10 +35,10 @@ includeSyncDropbox("SDSU")
 
 
 #### 1) Set working directory ####
-path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data/Microbial_Seqs_2022/FG_16S_seqs_2022"
-list.files(path)
+setwd("/home/rstudio/Dropbox/SDSU")
 
 path <- "/home/rstudio/Dropbox/SDSU/Faville_Grove_microbial_sequences_2022/16S_seqs_2022"
+list.files(path)
 
 #### 2) Combine all forward and reverse reads. Forward and reverse fastq filenames have format: SAMPLENAME_R1.fastq.gz and SAMPLENAME_R2.fastq.gz ####
 FWD_reads <- sort(list.files(path, pattern ="_R1.fastq.gz", full.names = TRUE))
@@ -150,12 +153,12 @@ dim(bact_seq_table)
 
 
 #### 11) Remove chimeras ###
-bact_seq_table_nochim <- removeBimeraDenovo(bact_seq_table, method = "consensus", multithread = TRUE, verbose = TRUE)
-# found ____ chimeras out of ____ sequences (__% identified as chimeric)
+bact_seq_table_nochim <- removeBimeraDenovo(bact_seq_table, method = "consensus", multithread = TRUE, verbose = TRUE, minFoldParentOverAbundance = 4)
+# found 18,742 chimeras out of 54,916 sequences (34% identified as chimeric)
 
 # We don't know if these chimeras held a lot in terms of abundance. To find out, we can calculate the proportion of sequences retained after chimeras removed.
 sum(bact_seq_table_nochim)/sum(bact_seq_table)
-# We retained ___% of sequence abundance. Great!
+# We retained 98% of sequence abundance. Great!
 
 
 #### 12) Track reads through the pipeline to verify everything worked as expected ####
@@ -168,7 +171,7 @@ getN <- function(x) sum(getUniques(x))
                              merged = sapply(mergers, getN),
                              non_chim = rowSums(bact_seq_table_nochim), 
                              final_perc_reads_retained = round(rowSums(bact_seq_table_nochim)/out[, 1]*100, 1)))
-# Looks good! The most amount of reads were removed during filtering, as expected. On average, retained __% of reads.
+# Looks good! The most amount of reads were removed during filtering, as expected. On average, retained 88.5% of reads.
 
 
 #### 13) Make summary tables that can be used to assign taxonomy
