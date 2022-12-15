@@ -72,7 +72,7 @@ allOrients <- function(primer) {
 (FWD_orients <- allOrients(FWD_primer))
 (REV_orients <- allOrients(REV_primer))
 
-# The presence of ambiguous bases (Ns) in the sequencing reads makes accurate mapping of short primer sequences difficult. We are going to “pre-filter” the sequences just to remove those with Ns.
+# The presence of ambiguous bases (Ns) in the sequencing reads makes accurate mapping of short primer sequences difficult. We are going to “pre-filter” the sequences just to remove those with Ns, but perform no other filtering.
 FWD_filtN <- file.path(path, "filtN", basename(FWD_reads)) # Put N-filterd files in filtered/ subdirectory
 REV_filtN <- file.path(path, "filtN", basename(REV_reads))
 filterAndTrim(FWD_reads, FWD_filtN, REV_reads, REV_filtN, maxN = 0, multithread = TRUE)
