@@ -45,7 +45,7 @@ FWD_reads <- sort(list.files(path, pattern ="_R1.fastq.gz", full.names = TRUE))
 REV_reads <- sort(list.files(path, pattern ="_R2.fastq.gz", full.names = TRUE))
 
 # Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
-(sample.names <- sapply(strsplit(basename(FWD_reads), "_"), `[`, 1)) #sample ID occurs before the first _ in the fastq file
+(sample.names <- sapply(strsplit(basename(FWD_reads), "_"), `[`, 2)) #sample ID occurs before the second _ in the fastq file
 
 
 #### 3) Inspect read quality profiles ####
