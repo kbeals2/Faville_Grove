@@ -149,7 +149,7 @@ mergers <- mergePairs(dada_FWD, filt_FWD, dada_REV, filt_REV, verbose = TRUE, mi
 #### 10) Construct a sequence table ####
 bact_seq_table <- makeSequenceTable(mergers)
 dim(bact_seq_table) 
-# (number of samples, number of amplicon sequence variants ASVs) (found 54,916 ASVs across the 57 samples)
+# (number of samples, number of amplicon sequence variants ASVs) (found 54,916 unique sequences across the 57 samples)
 
 
 #### 11) Remove chimeras ###
