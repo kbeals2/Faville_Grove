@@ -50,10 +50,10 @@ REV_reads <- sort(list.files(path, pattern ="_R2.fastq.gz", full.names = TRUE))
 
 #### 3) Inspect read quality profiles ####
 plotQualityProfile(FWD_reads[1:4])
-# Quality doesn't drop below q30; no need to truncate
+# Quality doesn't drop below PHRED score of 30; no need to truncate
 
 plotQualityProfile(REV_reads[1:4])
-# Quality doesn't drop below q30; no need to truncate
+# Quality doesn't drop below PHRED score of 30; no need to truncate
 
 
 #### 4) Check for primers on the sequences ####
