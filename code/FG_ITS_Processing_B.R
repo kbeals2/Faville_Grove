@@ -1,0 +1,125 @@
+#### ITS AMPLICON PROCESSING FOR FAVILLE GROVE PROJECT ####
+# POST PRIMER REMOVAL STEPS (to be completed using supercomputer) #
+# Soil samples collected from Faville Prairie (remnant) and Tillotson Prairie (restoration) in summer 2022
+# Used ITS7 Forward and ITS4 Reverse primers (all fungal taxa)
+
+(.packages())
+
+# Installing DADA2 via devtools (necessary when using with AWS RStudio AMI)
+install.packages("devtools")
+library(devtools)
+
+devtools::install_github("benjjneb/dada2", ref = "v1.18") # note that the AMI created by Louis Aslett is R version 4.0, and the more recent versions of dada2 only work with R 4.2. So we install an earlier version of dada2 here when connecting through AWS AMI
+
+library(dada2)
+
+# Link Dropbox where sequences are stored
+library("RStudioAMI")
+linkDropbox()
+excludeSyncDropbox("*")
+includeSyncDropbox("SDSU")
+
+
+# Create new working directory for cutadapted fastq files 
+# **files must be moved from personal machine to a "cutadapt" file in the Dropbox directory
+path <- "/home/rstudio/Dropbox/SDSU/Faville_Grove_microbial_sequences_2022/ITS_seqs_2022/cutadapt"
+list.files(path)
+
+setwd("/home/rstudio/Dropbox/SDSU")
+
+#### 5) Inspect read quality profiles ####
+plotQualityProfile(FWD_cut[1])
+# These sequences are 250 bp in length
+# Quality drops below PHRED score of 30 around 230 bases
+# sample Q4 (38th sample) did not sequence properly; only has 3 reads 
+
+plotQualityProfile(REV_cut[1])
+# Quality drops below PHRED score of 30 around 190 bases
+# sample Q4's REV reads don't look good either
+
+
+#### 6) Filter and Trim ####
+# For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Since the primers are already removed, we don't truncate here. Instead, we enforce a minimum sequence length (minLen) to get rid of spurious very low-length sequences. 
+
+FWD_filt <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.gz"))
+REV_filt <- file.path(path, "filtered", paste0(sample.names, "_R_filtered.fastq.gz"))
+names(FWD_filt) <- sample.names
+names(REV_filt) <- sample.names
+
+out <- filterAndTrim(FWD_cut, FWD_filt, REV_cut, REV_filt, maxN = 0, maxEE = c(2, 2), 
+                     truncQ = 2, minLen = 50, rm.phix = TRUE, compress = TRUE, multithread = TRUE)
+# On average, 76% of reads were retained after filtering
+
+
+#### 7) Learn the error rates ####
+# Use the filtered reads to learn the sequence error rates and correct for these in the later steps of the pipeline
+err_FWD <- learnErrors(FWD_filt, multithread = TRUE) # took less than 2 min
+err_REV <- learnErrors(REV_filt, multithread = TRUE) # took less than 3 min
+
+# Visualize the estimated error rates as a sanity check
+# red line = expected error rate based on quality score (note that this decreases as the quality increases)
+# black line = estimated error rate after convergence of the machine-learning algorithm
+# black dots = observed error frequency in our samples
+# black dots should align with black line
+plotErrors(err_FWD, nominalQ = TRUE) 
+plotErrors(err_REV, nominalQ = TRUE)
+
+
+#### 8) Sample inference ####
+# This algorithm will tell us how many unique sequences are in each sample after controlling for sequencing errors. Can also set pool = TRUE to pool across all samples to detect low abundance variants.
+dada_FWD <- dada(FWD_filt, err = err_FWD, multithread = TRUE, pool = "pseudo")
+dada_REV <- dada(REV_filt, err = err_REV, multithread = TRUE, pool = "pseudo")
+
+
+#### 9) Merge paired reads ####
+# Since we don't have enough overlap to meet the required minimum of 12 bases of overlap (see notes before Step 5), we can lower the minimum overlap with the parameter minOverlap = .  
+mergers <- mergePairs(dada_FWD, FWD_filt, dada_REV, REV_filt, verbose = TRUE)
+# On average, __ merge success rate across samples
+
+
+#### 10) Construct a sequence table ####
+fungi_seq_table <- makeSequenceTable(mergers)
+dim(fungi_seq_table) 
+# (number of samples, number of amplicon sequence variants ASVs) (found 7,695 unique sequences across the 57 samples)
+
+
+#### 11) Remove chimeras ###
+fungi_seq_table_nochim <- removeBimeraDenovo(fungi_seq_table, method = "consensus", multithread = TRUE, verbose = TRUE)
+# found 31 chimeras out of 7,695 unique sequences (only 0.4% identified as chimeric!)
+
+sum(fungi_seq_table_nochim)/sum(fungi_seq_table)
+# retained 99.7% of sequence abundance
+
+
+#### 12) Track reads through the pipeline to verify everything worked as expected ####
+getN <- function(x) sum(getUniques(x))
+(summary_table <- data.frame(row.names = sample.names, 
+                             input = out[, 1],
+                             filtered = out[, 2], 
+                             denoised_FWD = sapply(dada_FWD, getN),
+                             denoised_REV = sapply(dada_REV, getN), 
+                             merged = sapply(mergers, getN),
+                             non_chim = rowSums(fungi_seq_table_nochim), 
+                             final_perc_reads_retained = round(rowSums(fungi_seq_table_nochim)/out[, 1]*100, 1)))
+# Looks ok. The most amount of reads were removed during filtering, as expected. On average, retained 62.4% of reads. 
+# Should look back at the mergers step; could be an issue like this one: https://github.com/benjjneb/dada2/issues/213
+
+
+#### 13) Make summary tables that can be used to assign taxonomy
+
+# giving seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs <- colnames(fungi_seq_table_nochim)
+asv_headers <- vector(dim(fungi_seq_table_nochim)[2], mode = "character")
+
+for (i in 1:dim(fungi_seq_table_nochim)[2]) {
+  asv_headers[i] <- paste(">ASV", i, sep = "_")
+}
+
+# make a fasta file of the final ASV seqs (once this is made, upload to rdp.cme.msu.edu/classifier/classifier.jsp)
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+write(asv_fasta, "/home/rstudio/Dropbox/SDSU/FG_2022_Fungi_ASV.fa")
+
+# make count table
+asv_table <- t(fungi_seq_table_nochim)
+row.names(asv_table) <- sub(">", "", asv_headers)
+write.table(asv_table, "FG_2022_Fungi_ASV_counts.tsv", sep = "\t", quote = F, col.names = NA)  
