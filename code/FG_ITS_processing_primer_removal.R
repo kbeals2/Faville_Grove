@@ -1,6 +1,7 @@
 #### ITS AMPLICON PROCESSING FOR FAVILLE GROVE PROJECT ####
+# PRIMER REMOVAL STEPS (to be completed using personal machine) #
 # Soil samples collected from Faville Prairie (remnant) and Tillotson Prairie (restoration) in summer 2022
-# Used ITS7 Forward and ITS4 Reverse primers
+# Used ITS7 Forward and ITS4 Reverse primers (all fungal taxa)
 
 # Installing via Bioconductor
 (.packages())
