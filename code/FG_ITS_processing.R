@@ -23,11 +23,6 @@ includeSyncDropbox("SDSU")
 path <- "/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data/Microbial_Seqs_2022/FG_ITS_seqs_2022"
 list.files(path)
 
-path <- "/home/rstudio/Dropbox/SDSU/Faville_Grove_microbial_sequences_2022/16S_seqs_2022"
-list.files(path)
-
-setwd("/home/rstudio/Dropbox/SDSU")
-
 
 #### 2) Combine all forward and reverse reads. Forward and reverse fastq filenames have format: SAMPLENAME_R1.fastq.gz and SAMPLENAME_R2.fastq.gz ####
 FWD_reads <- sort(list.files(path, pattern ="_R1.fastq.gz", full.names = TRUE))
@@ -72,9 +67,8 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_filtN[[1]]),
 # As expected, the FWD primer is found in the FWD reads in its forward orientation and on the REV reads in its reverse complement orientation. The REV primer is found in the REV reads in its forward orientation and on the FWD reads in its reverse complement orientation. 
 
 
-#### 7) Remove primers using cutadapt #### 
+#### 4) Remove primers using cutadapt #### 
 # Documentation for cutadapt found at: https://cutadapt.readthedocs.io/en/stable/index.html 
-cutadap <- "/Users/kendallb/miniconda3/envs/qiime2-2018.11/bin/cutadapt" # 2.6
 cutadapt <- "/Users/kendallb/miniconda3/bin/cutadapt" # 2.6
 
 system2(cutadapt, args = "--version") # Run shell commands from R
@@ -113,20 +107,26 @@ rbind(FWD_ForwardReads = sapply(FWD_orients, primerHits, fn = FWD_cut[[1]]),
 # Fantastic! The primers are no longer detected in the cutadapted reads
 
 
-## THE REMAINING STEPS OF THE PIPELINE TAKE PLACE IN THE AWS AMI ##
+## NOW THAT THE PRIMERS ARE REMOVED, THE REMAINING STEPS OF THE PIPELINE CAN BE PERFORMED IN THE AWS AMI ##
+# Cutadapt fastqs must be moved to a "cutadapt" file in the Dropbox directory
 
-#### 3) Inspect read quality profiles ####
-plotQualityProfile(FWD_cut[1:4])
+path <- "/home/rstudio/Dropbox/SDSU/Faville_Grove_microbial_sequences_2022/ITS_seqs_2022/cutadapt"
+list.files(path)
+
+setwd("/home/rstudio/Dropbox/SDSU")
+
+#### 5) Inspect read quality profiles ####
+plotQualityProfile(FWD_cut[1])
 # These sequences are 250 bp in length
 # Quality drops below PHRED score of 30 around 230 bases
 # sample Q4 (38th sample) did not sequence properly; only has 3 reads 
 
-plotQualityProfile(REV_cut[1:4])
+plotQualityProfile(REV_cut[1])
 # Quality drops below PHRED score of 30 around 190 bases
 # sample Q4's REV reads don't look good either
 
 
-#### 4) Filter and Trim ####
+#### 6) Filter and Trim ####
 # For this dataset, we will use standard filtering paraments: maxN = 0 (DADA2 requires sequences contain no Ns), truncQ = 2,  rm.phix = TRUE and maxEE = 2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores. Since the primers are already removed, we don't truncate here. Instead, we enforce a minimum sequence length (minLen) to get rid of spurious very low-length sequences. 
 
 FWD_filt <- file.path(path, "filtered", paste0(sample.names, "_F_filtered.fastq.gz"))
@@ -193,7 +193,7 @@ getN <- function(x) sum(getUniques(x))
 # Should look back at the mergers step; could be an issue like this one: https://github.com/benjjneb/dada2/issues/213
 
 
-#### 17) Make summary tables that can be used to assign taxonomy
+#### 13) Make summary tables that can be used to assign taxonomy
 
 # giving seq headers more manageable names (ASV_1, ASV_2...)
 asv_seqs <- colnames(fungi_seq_table_nochim)
@@ -202,7 +202,6 @@ asv_headers <- vector(dim(fungi_seq_table_nochim)[2], mode = "character")
 for (i in 1:dim(fungi_seq_table_nochim)[2]) {
   asv_headers[i] <- paste(">ASV", i, sep = "_")
 }
-
 
 # make a fasta file of the final ASV seqs (once this is made, upload to rdp.cme.msu.edu/classifier/classifier.jsp)
 asv_fasta <- c(rbind(asv_headers, asv_seqs))
