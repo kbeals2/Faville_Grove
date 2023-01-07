@@ -101,7 +101,7 @@ getN <- function(x) sum(getUniques(x))
                              denoised_FWD = sapply(dada_FWD, getN),
                              non_chim = rowSums(AMF_seq_table_nochim), 
                              final_perc_reads_retained = round(rowSums(AMF_seq_table_nochim)/out[, 1]*100, 1)))
-# Looks ok. On average, retained __% of reads. 
+# Looks ok. On average, retained 58% of reads. 
 
 
 #### 15) Make summary tables that can be used to assign taxonomy
