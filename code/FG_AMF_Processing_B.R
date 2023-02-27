@@ -122,5 +122,3 @@ write(asv_fasta, "/home/rstudio/Dropbox/SDSU/FG_2022_AMF_ASV.fa")
 asv_table <- t(AMF_seq_table_nochim)
 row.names(asv_table) <- sub(">", "", asv_headers)
 write.table(asv_table, "FG_2022_AMF_ASV_counts.tsv", sep = "\t", quote = F, col.names = NA)  
-
-# testing if I can push 
