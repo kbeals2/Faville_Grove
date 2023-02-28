@@ -123,3 +123,6 @@ write(asv_fasta, "/home/rstudio/Dropbox/SDSU/FG_2022_Fungi_ASV.fa")
 asv_table <- t(fungi_seq_table_nochim)
 row.names(asv_table) <- sub(">", "", asv_headers)
 write.table(asv_table, "FG_2022_Fungi_ASV_counts.tsv", sep = "\t", quote = F, col.names = NA)  
+
+
+# This is text I'm adding during lab meeting tutorial about GitHub
