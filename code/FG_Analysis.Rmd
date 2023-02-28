@@ -1,0 +1,75 @@
+---
+title: "FG_Analysis"
+author: "Kendall Beals"
+date: "2023-02-28"
+output: html_document
+---
+
+```{r}
+# Set working directory
+getwd()
+setwd("/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data")
+```
+
+```{r}
+# Install and load necessary packages
+(.packages())
+install.packages("pacman")
+library(pacman)
+p_load("fBasics", "rcompanion", "tidyverse", "lme4", "car", "vegan")
+p_load("phyloseq", "DESeq2", "dendextend")
+```
+
+
+# PREAMBLE
+## Load in microbial data (i.e., count and taxonomy tables)
+
+```{r}
+bact_count <- read.table("FG_2022_Bact_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+fungi_all_count <- read.table("FG_2022_Fungi_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+fungi_AMF_count <- read.table("FG_2022_AMF_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+```
+
+```{r}
+bact_taxa <- read.table("FG_Bact_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+fungi_all_taxa <- read.table("FG_Fungi_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+fungi_AMF_taxa <- read.table("FG_AMF_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+```
+
+
+# MICROBIAL DIVERSITY
+## Estimate diversity with effective number of ASVs using hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
+
+```{r}
+install.packages("hilldiv")
+library(hilldiv)
+```
+
+```{r}
+# The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
+# q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
+# q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
+# q = 2 overweighs abundant ASVs. 
+
+# The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
+sample <- (colnames(bact_count))
+management_type <- c(rep("Remnant", 29), rep("Restoration", 28))
+hierarchy_table <- cbind(sample, management_type)
+colnames(hierarchy_table) <- c("Sample", "Management_type")
+```
+
+```{r}
+# Test whether diversity values differ by management type
+(bactq0 <- div_test(bact_count, qvalue = 0, hierarchy = hierarchy_table))
+(bactq1 <- div_test(bact_count, qvalue = 1, hierarchy = hierarchy_table))
+(bactq2 <- div_test(bact_count, qvalue = 2, hierarchy = hierarchy_table))
+
+(allfungiq0 <- div_test(fungi_all_count, qvalue = 0, hierarchy = hierarchy_table))
+(allfungiq1 <- div_test(fungi_all_count, qvalue = 1, hierarchy = hierarchy_table))
+(allfungiq2 <- div_test(fungi_all_count, qvalue = 2, hierarchy = hierarchy_table))
+
+(AMFfungiq0 <- div_test(fungi_AMF_count, qvalue = 0, hierarchy = hierarchy_table))
+(AMFfungiq1 <- div_test(fungi_AMF_count, qvalue = 1, hierarchy = hierarchy_table))
+(AMFfungiq2 <- div_test(fungi_AMF_count, qvalue = 2, hierarchy = hierarchy_table))
+```
+
