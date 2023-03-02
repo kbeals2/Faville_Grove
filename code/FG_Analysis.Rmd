@@ -1,65 +1,61 @@
 ---
-title: "FG_Analysis"
+title: "Faville Grove Analysis"
 author: "Kendall Beals"
 date: "2023-02-28"
 output: html_document
 ---
 
+**The project objectives and hypotheses will go here.**
+
+
+First, install and/or load in the following packages. Note that this must be done in the console and not within the Rmarkdown document.  
+fBasics  
+rcompanion  
+tidyverse  
+lme4  
+car  
+vegan  
+hilldiv
+
+
+### Preamble
+#### Load in microbial data (i.e., count and taxonomy tables)
+
 ```{r}
-# Set working directory
-getwd()
-setwd("/Users/kendallb/Documents/Documents_KK_MacBook_Pro/SDSU_Postdoc/Git/Faville_Grove/data")
+bact_count <- read.table("../data/FG_2022_Bact_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+fungi_all_count <- read.table("../data/FG_2022_Fungi_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+fungi_AMF_count <- read.table("../data/FG_2022_AMF_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
 ```
 
 ```{r}
-# Install and load necessary packages
-(.packages())
-install.packages("pacman")
-library(pacman)
-p_load("fBasics", "rcompanion", "tidyverse", "lme4", "car", "vegan")
-p_load("phyloseq", "DESeq2", "dendextend")
+bact_taxa <- read.table("../data/FG_Bact_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+fungi_all_taxa <- read.table("../data/FG_Fungi_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+fungi_AMF_taxa <- read.table("../data/FG_AMF_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
 ```
 
+Note that knitr sets the working directory to the same directory of the Rmarkdown file. Since this Rmarkdown file is made in my code folder in my R project and the microbial data is in the data folder, I have to specify the working directory of the data tables within the read.table function. 
+ 
+ 
+### Microbial diversity
+#### Estimate diversity with effective number of ASVs using hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
 
-# PREAMBLE
-## Load in microbial data (i.e., count and taxonomy tables)
+The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
+q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
+q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
+q = 2 overweighs abundant ASVs. 
 
+The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
 ```{r}
-bact_count <- read.table("FG_2022_Bact_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
-fungi_all_count <- read.table("FG_2022_Fungi_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
-fungi_AMF_count <- read.table("FG_2022_AMF_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
-```
-
-```{r}
-bact_taxa <- read.table("FG_Bact_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
-fungi_all_taxa <- read.table("FG_Fungi_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
-fungi_AMF_taxa <- read.table("FG_AMF_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
-```
-
-
-# MICROBIAL DIVERSITY
-## Estimate diversity with effective number of ASVs using hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
-
-```{r}
-install.packages("hilldiv")
-library(hilldiv)
-```
-
-```{r}
-# The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
-# q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
-# q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
-# q = 2 overweighs abundant ASVs. 
-
-# The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
 sample <- (colnames(bact_count))
 management_type <- c(rep("Remnant", 29), rep("Restoration", 28))
 hierarchy_table <- cbind(sample, management_type)
 colnames(hierarchy_table) <- c("Sample", "Management_type")
+
+hierarchy_table <- as.data.frame(hierarchy_table)
 ```
 
+Test whether diversity values differ by management type
 ```{r}
-# Test whether diversity values differ by management type
 (bactq0 <- div_test(bact_count, qvalue = 0, hierarchy = hierarchy_table))
 (bactq1 <- div_test(bact_count, qvalue = 1, hierarchy = hierarchy_table))
 (bactq2 <- div_test(bact_count, qvalue = 2, hierarchy = hierarchy_table))
@@ -71,5 +67,123 @@ colnames(hierarchy_table) <- c("Sample", "Management_type")
 (AMFfungiq0 <- div_test(fungi_AMF_count, qvalue = 0, hierarchy = hierarchy_table))
 (AMFfungiq1 <- div_test(fungi_AMF_count, qvalue = 1, hierarchy = hierarchy_table))
 (AMFfungiq2 <- div_test(fungi_AMF_count, qvalue = 2, hierarchy = hierarchy_table))
+```
+
+Create a table of summary statistics
+```{r}
+microbe_type <- c("bact", "bact", "bact", "fungi_all", "fungi_all", "fungi_all", "fungi_AMF", "fungi_AMF", "fungi_AMF")
+div_order <- c("q1", "q2", "q3", "q1", "q2", "q3","q1", "q2", "q3")
+test_statistic <- c("W", "W", "t", "W", "t", "t", "t", "t", "W")
+test_stat_value <- c(418, 278, -3.70, 547, 1.08, -0.16, 0.42, -1.86, 305)
+p_value <- c(0.85, 0.041, 0.00054, 0.025, 0.28, 0.87, 0.68, 0.069, 0.11)
+(diversity_summary_table <- as.data.frame(cbind(microbe_type, div_order, test_statistic, test_stat_value, p_value)))
+(diversity_summary_table <- diversity_summary_table %>% mutate_at(c('test_stat_value', 'p_value'), as.numeric))
+```
+
+
+### Visualize diversity among remnant and restoration soils
+
+First, use the model outputs from the div_test function to make combined tables with values for all levels of q (combine all of q0 table, with value columns (i.e., Hill numbers) of q1 & q2).
+```{r}
+bact_hill_table <- cbind(bactq0$data, bactq1$data$Value, bactq2$data$Value) 
+colnames(bact_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
+
+allfungi_hill_table <- cbind(allfungiq0$data, allfungiq1$data$Value, allfungiq2$data$Value) 
+colnames(allfungi_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
+
+AMFfungi_hill_table <- cbind(AMFfungiq0$data, AMFfungiq1$data$Value, AMFfungiq2$data$Value) 
+colnames(AMFfungi_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
+```
+
+Then use the reshape2 package melt each table so that all the hill numbers in are in one column.
+
+```{r}
+bact_hill_table_melted <- melt(bact_hill_table, id = c("Plot", "Management_type"))
+colnames(bact_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
+
+allfungi_hill_table_melted <- melt(allfungi_hill_table, id = c("Plot", "Management_type"))
+colnames(allfungi_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
+
+AMFfungi_hill_table_melted <- melt(AMFfungi_hill_table, id = c("Plot", "Management_type"))
+colnames(AMFfungi_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
+```
+
+Make boxplots of diversity at each order of q
+
+```{r}
+(bact_diversity_fig <- ggplot(bact_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
+  xlab("Order of diversity (q)") +
+  ylab("Hill number") +
+  theme_classic(base_size = 10, base_family = "") +
+   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_text(face = "bold", color = "black", size = 18),
+          axis.text.x = element_text(face = "plain", color = "black", size = 14),
+          axis.text.y = element_text(face = "plain", color = "black", size = 14),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.ticks.x = element_blank(),
+          axis.line = element_line(size = 0.5)))
+```
+
+```{r}
+(allfungi_diversity_fig <- ggplot(allfungi_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
+  xlab("Order of diversity (q)") +
+  ylab("Hill number") +
+  theme_classic(base_size = 10, base_family = "") +
+   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_text(face = "bold", color = "black", size = 18),
+          axis.text.x = element_text(face = "plain", color = "black", size = 14),
+          axis.text.y = element_text(face = "plain", color = "black", size = 14),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.ticks.x = element_blank(),
+          axis.line = element_line(size = 0.5)))
+```
+
+```{r}
+(AMFfungi_diversity_fig <- ggplot(AMFfungi_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
+  xlab("Order of diversity (q)") +
+  ylab("Hill number") +
+  theme_classic(base_size = 10, base_family = "") +
+   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_text(face = "bold", color = "black", size = 18),
+          axis.text.x = element_text(face = "plain", color = "black", size = 14),
+          axis.text.y = element_text(face = "plain", color = "black", size = 14),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.ticks.x = element_blank(),
+          axis.line = element_line(size = 0.5)))
+```
+
+Looks like there is an outlier in the all_fungi dataset. Check to verify.
+```{r}
+boxplot.stats(allfungi_hill_table_melted$Hill_number)$out
+```
+Yes, the value 7664 is an outlier.
+
+Now remove it from the dataset.
+```{r}
+outlier <- boxplot.stats(allfungi_hill_table_melted$Hill_number)$out
+allfungi_hill_table_melted_clean <- allfungi_hill_table_melted[-which(allfungi_hill_table_melted$Hill_number %in% outlier), ]
+```
+
+Replot the all_fungi dataset without the outlier.
+```{r}
+(allfungi_diversity_fig_clean <- ggplot(allfungi_hill_table_melted_clean, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
+  xlab("Order of diversity (q)") +
+  ylab("Hill number") +
+  theme_classic(base_size = 10, base_family = "") +
+   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_text(face = "bold", color = "black", size = 18),
+          axis.text.x = element_text(face = "plain", color = "black", size = 14),
+          axis.text.y = element_text(face = "plain", color = "black", size = 14),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.ticks.x = element_blank(),
+          axis.line = element_line(size = 0.5)))
 ```
 
