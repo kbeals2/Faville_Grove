@@ -15,7 +15,8 @@ tidyverse
 lme4  
 car  
 vegan  
-hilldiv
+hilldiv  
+patchwork
 
 
 ### Preamble
@@ -69,6 +70,17 @@ Test whether diversity values differ by management type
 (AMFfungiq2 <- div_test(fungi_AMF_count, qvalue = 2, hierarchy = hierarchy_table))
 ```
 
+```{r}
+count_tables <- list(bact_count, fungi_all_count, fungi_AMF_count)
+
+div_test( , qvalue = 0, hierarchy = hierarchy_table)
+
+q0 <- for (i in 1:length(count_tables)) {
+  count_tables[[i]][["Avg"]]<-rowMeans(df.list[[i]][1:2])
+}
+```
+
+
 Create a table of summary statistics
 ```{r}
 microbe_type <- c("bact", "bact", "bact", "fungi_all", "fungi_all", "fungi_all", "fungi_AMF", "fungi_AMF", "fungi_AMF")
@@ -96,7 +108,6 @@ colnames(AMFfungi_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
 ```
 
 Then use the reshape2 package melt each table so that all the hill numbers in are in one column.
-
 ```{r}
 bact_hill_table_melted <- melt(bact_hill_table, id = c("Plot", "Management_type"))
 colnames(bact_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
@@ -108,54 +119,34 @@ AMFfungi_hill_table_melted <- melt(AMFfungi_hill_table, id = c("Plot", "Manageme
 colnames(AMFfungi_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
 ```
 
-Make boxplots of diversity at each order of q
-
+Make boxplots of diversity at each order of q. First, create a list of the melted tables. Then create a function for the desired figure. Then use lapply to apply the figure function to the list. 
 ```{r}
-(bact_diversity_fig <- ggplot(bact_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
+melted_tables <- list(bact_hill_table_melted, allfungi_hill_table_melted, AMFfungi_hill_table_melted)
+
+make_diversity_plot <- function(df){
+  ggplot(data = df, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
   geom_boxplot() +
   scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
   xlab("Order of diversity (q)") +
   ylab("Hill number") +
   theme_classic(base_size = 10, base_family = "") +
-   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
-          axis.title = element_text(face = "bold", color = "black", size = 18),
-          axis.text.x = element_text(face = "plain", color = "black", size = 14),
-          axis.text.y = element_text(face = "plain", color = "black", size = 14),
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_blank(),
+          axis.text = element_text(face = "plain", color = "black", size = 12),
           axis.ticks.length = unit(0.15, "cm"),
           axis.ticks.x = element_blank(),
-          axis.line = element_line(size = 0.5)))
+          axis.line = element_line(size = 0.5),
+          legend.position = "none")
+} 
+
+diversity_plots <- lapply(melted_tables_list, make_diversity_plot)
 ```
 
+Visualize the figures.
 ```{r}
-(allfungi_diversity_fig <- ggplot(allfungi_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
-  geom_boxplot() +
-  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
-  xlab("Order of diversity (q)") +
-  ylab("Hill number") +
-  theme_classic(base_size = 10, base_family = "") +
-   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
-          axis.title = element_text(face = "bold", color = "black", size = 18),
-          axis.text.x = element_text(face = "plain", color = "black", size = 14),
-          axis.text.y = element_text(face = "plain", color = "black", size = 14),
-          axis.ticks.length = unit(0.15, "cm"),
-          axis.ticks.x = element_blank(),
-          axis.line = element_line(size = 0.5)))
-```
-
-```{r}
-(AMFfungi_diversity_fig <- ggplot(AMFfungi_hill_table_melted, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
-  geom_boxplot() +
-  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
-  xlab("Order of diversity (q)") +
-  ylab("Hill number") +
-  theme_classic(base_size = 10, base_family = "") +
-   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
-          axis.title = element_text(face = "bold", color = "black", size = 18),
-          axis.text.x = element_text(face = "plain", color = "black", size = 14),
-          axis.text.y = element_text(face = "plain", color = "black", size = 14),
-          axis.ticks.length = unit(0.15, "cm"),
-          axis.ticks.x = element_blank(),
-          axis.line = element_line(size = 0.5)))
+diversity_plots[[1]]
+diversity_plots[[2]]
+diversity_plots[[3]]
 ```
 
 Looks like there is an outlier in the all_fungi dataset. Check to verify.
@@ -170,20 +161,15 @@ outlier <- boxplot.stats(allfungi_hill_table_melted$Hill_number)$out
 allfungi_hill_table_melted_clean <- allfungi_hill_table_melted[-which(allfungi_hill_table_melted$Hill_number %in% outlier), ]
 ```
 
-Replot the all_fungi dataset without the outlier.
+Create a new list that contains the updated allfungi dataset (i.e., without the outlier). Apply the figure function to the new list. 
 ```{r}
-(allfungi_diversity_fig_clean <- ggplot(allfungi_hill_table_melted_clean, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
-  geom_boxplot() +
-  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
-  xlab("Order of diversity (q)") +
-  ylab("Hill number") +
-  theme_classic(base_size = 10, base_family = "") +
-   theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
-          axis.title = element_text(face = "bold", color = "black", size = 18),
-          axis.text.x = element_text(face = "plain", color = "black", size = 14),
-          axis.text.y = element_text(face = "plain", color = "black", size = 14),
-          axis.ticks.length = unit(0.15, "cm"),
-          axis.ticks.x = element_blank(),
-          axis.line = element_line(size = 0.5)))
+melted_tables_list2 <- list(bact_hill_table_melted, allfungi_hill_table_melted_clean, AMFfungi_hill_table_melted)
+diversity_plots2 <- lapply(melted_tables_list2, make_diversity_plot)
+diversity_plots2[[2]]
+```
+
+Stitch the figures together with the patchwork package.
+```{r}
+(grouped_diversity_figs <- (diversity_plots2[[1]] + diversity_plots2[[2]]) + diversity_plots2[[3]])
 ```
 
