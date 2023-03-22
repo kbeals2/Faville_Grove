@@ -16,7 +16,8 @@ lme4
 car  
 vegan  
 hilldiv  
-patchwork
+patchwork 
+metacoder
 
 
 ### Preamble
