@@ -70,17 +70,6 @@ Test whether diversity values differ by management type
 (AMFfungiq2 <- div_test(fungi_AMF_count, qvalue = 2, hierarchy = hierarchy_table))
 ```
 
-```{r}
-count_tables <- list(bact_count, fungi_all_count, fungi_AMF_count)
-
-div_test( , qvalue = 0, hierarchy = hierarchy_table)
-
-q0 <- for (i in 1:length(count_tables)) {
-  count_tables[[i]][["Avg"]]<-rowMeans(df.list[[i]][1:2])
-}
-```
-
-
 Create a table of summary statistics
 ```{r}
 microbe_type <- c("bact", "bact", "bact", "fungi_all", "fungi_all", "fungi_all", "fungi_AMF", "fungi_AMF", "fungi_AMF")
