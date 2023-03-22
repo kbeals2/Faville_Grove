@@ -38,6 +38,23 @@ fungi_AMF_taxa <- read.table("../data/FG_AMF_ASV_Taxonomy.csv", header = T, chec
 Note that knitr sets the working directory to the same directory of the Rmarkdown file. Since this Rmarkdown file is made in my code folder in my R project and the microbial data is in the data folder, I have to specify the working directory of the data tables within the read.table function. 
  
  
+```{r}
+bact_count2 <- tibble::rownames_to_column(bact_count, "ASV")
+
+bact_taxa$ASV <- as.character(bact_taxa$ASV)
+bact_count2$ASV <- as.character(bact_count2$ASV)
+
+bact_ASV_data <- left_join(bact_count2, bact_taxa,
+                           by = c("ASV" = "ASV"))
+
+bact_obj <- parse_tax_data()
+```
+ 
+It's worth knowing how many singletons we have in our bacterial and fungal datasets. We can use the zero_low_counts function in the metacoder package to convert any ASV counts less than some number to zero.
+```{r}
+```
+ 
+ 
 ### Microbial diversity
 #### Estimate diversity with effective number of ASVs using hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
 
