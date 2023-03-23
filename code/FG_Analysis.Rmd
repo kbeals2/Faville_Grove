@@ -24,6 +24,35 @@ metacoder
 #### Load in microbial data (i.e., count and taxonomy tables)
 
 ```{r}
+bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts_expanded.tsv")
+bact_taxa <- read_tsv("../data/FG_Bact_Taxonomy_expanded.txt")
+```
+
+```{r}
+bact_taxa$ASV_ID <- as.character(bact_taxa$ASV_ID)
+bact_count$ASV_ID <- as.character(bact_count$ASV_ID)
+
+bact_ASV_data <- left_join(bact_count, bact_taxa,
+                           by = c("ASV_ID" = "ASV_ID"))
+
+bact_obj <- parse_tax_data(bact_ASV_data,
+                           class_cols = "Taxonomy",
+                           class_sep = ";")
+```
+
+We have now created a taxmap object. The first line tells us that the ASVs are assigned to 3,718 unique taxa. The second line tells us how the taxa are related to one another in the tree. The original data can now be found in bact_obj$data$tax_data. Note that this tax_data table has a column called "taxon_id" which associates rows in the table to a taxa in the taxonomy.
+
+
+```{r}
+bact_obj <- parse_tax_data(bact_ASV_data,
+                      class_cols = "Taxonomy",
+                      class_sep = ";",
+                      class_regex = "^([a-z]{0,1})_{0,2}(.*)$",
+                      class_key = c("tax_rank" = "taxon_rank", "name" = "taxon_name"))
+```
+
+
+```{r}
 bact_count <- read.table("../data/FG_2022_Bact_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
 fungi_all_count <- read.table("../data/FG_2022_Fungi_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
 fungi_AMF_count <- read.table("../data/FG_2022_AMF_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
@@ -46,8 +75,6 @@ bact_count2$ASV <- as.character(bact_count2$ASV)
 
 bact_ASV_data <- left_join(bact_count2, bact_taxa,
                            by = c("ASV" = "ASV"))
-
-bact_obj <- parse_tax_data()
 ```
  
 It's worth knowing how many singletons we have in our bacterial and fungal datasets. We can use the zero_low_counts function in the metacoder package to convert any ASV counts less than some number to zero.
