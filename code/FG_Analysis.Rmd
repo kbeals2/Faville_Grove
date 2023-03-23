@@ -26,30 +26,58 @@ metacoder
 ```{r}
 bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts_expanded.tsv")
 bact_taxa <- read_tsv("../data/FG_Bact_Taxonomy_expanded.txt")
+sample_data <- read_tsv("../data/Sample_metadata.txt")
 ```
 
+Combine the taxa and count tables by matching the "ASV_ID" columns in both tables.
 ```{r}
 bact_taxa$ASV_ID <- as.character(bact_taxa$ASV_ID)
 bact_count$ASV_ID <- as.character(bact_count$ASV_ID)
 
 bact_ASV_data <- left_join(bact_count, bact_taxa,
                            by = c("ASV_ID" = "ASV_ID"))
-
-bact_obj <- parse_tax_data(bact_ASV_data,
-                           class_cols = "Taxonomy",
-                           class_sep = ";")
 ```
 
-We have now created a taxmap object. The first line tells us that the ASVs are assigned to 3,718 unique taxa. The second line tells us how the taxa are related to one another in the tree. The original data can now be found in bact_obj$data$tax_data. Note that this tax_data table has a column called "taxon_id" which associates rows in the table to a taxa in the taxonomy.
-
-
+Create a taxmap object using the metacoder package. A taxmap object integrates an ASV or OTU count table with a taxonomy table. This allows us to perform the same manipulations to both tables simultaneously.
 ```{r}
 bact_obj <- parse_tax_data(bact_ASV_data,
-                      class_cols = "Taxonomy",
-                      class_sep = ";",
-                      class_regex = "^([a-z]{0,1})_{0,2}(.*)$",
-                      class_key = c("tax_rank" = "taxon_rank", "name" = "taxon_name"))
+                      class_cols = "Taxonomy", # the column that contains taxonomic information
+                      class_sep = ";", # The character used to separate taxa in the classification
+                      class_regex = "^([a-z]{0,1})_{0,2}(.*)$", # Regex identifying where the data for each taxon is
+                      class_key = c(tax_rank = "taxon_rank", # A key describing each regex capture group
+                                    tax_name = "taxon_name"))
 ```
+
+We have now created a taxmap object that contains an ASV count table (tax_data) and a taxonomy table (class_data). The first line tells us that the ASVs are assigned to 3,720 unique taxa. The second line tells us how the taxa are related to one another in the tree. Note that both tables have a column called "taxon_id" which associates rows in the table to a taxa in the taxonomy.
+
+Create a duplicate of the taxmap bact_obj that we can further manipulate. 
+```{r}
+bact_obj2 <- bact_obj
+```
+
+Remove low-aboundance counts from the tax_data table in the duplicate taxmap object by setting all counts with less than 2 reads (i.e., singletons) to zero.
+```{r}
+bact_obj2$data$tax_data <- zero_low_counts(bact_obj2, data = "tax_data", min_count = 2)
+```
+Found 63,573 counts of less than 2 (out of 2,061,918 counts total).
+
+Now we have ASVs that no longer contain any observations, as we can see with the following.
+```{r}
+no_reads_bact <- rowSums(bact_obj2$data$tax_data[, sample_data$Sample_ID]) == 0
+sum(no_reads_bact)
+```
+
+There are now 8,911 ASVs that have no reads. We can remove these ASVs using filter_obs, which is used to filter data associated with a taxonomy in a taxmap object. One of the advantages of integrating the ASV count table and taxonomy table into a taxmap object is that the ASVs with no reads can be filtered out of both tables at the same time.
+```{r}
+bact_obj2 <- filter_obs(bact_obj2, data = "tax_data", ! no_reads_bact, drop_taxa = TRUE)
+```
+
+We can see that the number of rows decreased in both the tax_data (i.e., ASV counts) and the class_data (i.e., taxonomy) tables. Specifically, the tax_data table now has 8,911 fewer rows than it did previously.
+
+
+
+
+
 
 
 ```{r}
@@ -66,20 +94,6 @@ fungi_AMF_taxa <- read.table("../data/FG_AMF_ASV_Taxonomy.csv", header = T, chec
 
 Note that knitr sets the working directory to the same directory of the Rmarkdown file. Since this Rmarkdown file is made in my code folder in my R project and the microbial data is in the data folder, I have to specify the working directory of the data tables within the read.table function. 
  
- 
-```{r}
-bact_count2 <- tibble::rownames_to_column(bact_count, "ASV")
-
-bact_taxa$ASV <- as.character(bact_taxa$ASV)
-bact_count2$ASV <- as.character(bact_count2$ASV)
-
-bact_ASV_data <- left_join(bact_count2, bact_taxa,
-                           by = c("ASV" = "ASV"))
-```
- 
-It's worth knowing how many singletons we have in our bacterial and fungal datasets. We can use the zero_low_counts function in the metacoder package to convert any ASV counts less than some number to zero.
-```{r}
-```
  
  
 ### Microbial diversity
