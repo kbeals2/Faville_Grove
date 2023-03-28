@@ -2,27 +2,21 @@
 title: "Faville Grove Analysis"
 author: "Kendall Beals"
 date: "2023-02-28"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 **The project objectives and hypotheses will go here.**
 
-
-First, install and/or load in the following packages. Note that this must be done in the console and not within the Rmarkdown document.  
-fBasics  
-rcompanion  
-tidyverse  
-lme4  
-car  
-vegan  
-hilldiv  
-patchwork 
-metacoder
+First, install and/or load in the following packages. Multiple packages can be loaded simultaneously using the p_load function in the pacman package.  
+```{r}
+library(pacman)
+p_load("fBasics", "rcompanion", "tidyverse", "metacoder", "vegan")
+```
 
 
-### Preamble
-#### Load in microbial data (i.e., count and taxonomy tables)
-
+### Loading and formatting data 
 ```{r}
 bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts_expanded.tsv")
 bact_taxa <- read_tsv("../data/FG_Bact_Taxonomy_expanded.txt")
@@ -38,6 +32,9 @@ bact_ASV_data <- left_join(bact_count, bact_taxa,
                            by = c("ASV_ID" = "ASV_ID"))
 ```
 
+
+#### Convert to taxmap format
+
 Create a taxmap object using the metacoder package. A taxmap object integrates an ASV or OTU count table with a taxonomy table. This allows us to perform the same manipulations to both tables simultaneously.
 ```{r}
 bact_obj <- parse_tax_data(bact_ASV_data,
@@ -48,12 +45,18 @@ bact_obj <- parse_tax_data(bact_ASV_data,
                                     tax_name = "taxon_name"))
 ```
 
+```{r}
+print(bact_obj)
+```
 We have now created a taxmap object that contains an ASV count table (tax_data) and a taxonomy table (class_data). The first line tells us that the ASVs are assigned to 3,720 unique taxa. The second line tells us how the taxa are related to one another in the tree. Note that both tables have a column called "taxon_id" which associates rows in the table to a taxa in the taxonomy.
 
 Create a duplicate of the taxmap bact_obj that we can further manipulate. 
 ```{r}
 bact_obj2 <- bact_obj
 ```
+
+
+#### Remove singletons
 
 Remove low-aboundance counts from the tax_data table in the duplicate taxmap object by setting all counts with less than 2 reads (i.e., singletons) to zero.
 ```{r}
@@ -72,152 +75,40 @@ There are now 8,911 ASVs that have no reads. We can remove these ASVs using filt
 bact_obj2 <- filter_obs(bact_obj2, data = "tax_data", ! no_reads_bact, drop_taxa = TRUE)
 ```
 
+```{r}
+print(bact_obj2)
+```
 We can see that the number of rows decreased in both the tax_data (i.e., ASV counts) and the class_data (i.e., taxonomy) tables. Specifically, the tax_data table now has 8,911 fewer rows than it did previously.
 
 
-
-
-
-
-
+#### Account for un-even sampling 
+To account for un-even sampling, convert counts to proportions and add the results to the taxmap object in a new table called "ASV_props". Rarefaction is another popular method for normalization, but the large downside is that it can result in discarding a lot of data.
 ```{r}
-bact_count <- read.table("../data/FG_2022_Bact_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
-fungi_all_count <- read.table("../data/FG_2022_Fungi_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
-fungi_AMF_count <- read.table("../data/FG_2022_AMF_ASV_counts.tsv", header = T, row.names = 1, check.names = F, sep = "\t")
+bact_obj2$data$ASV_props <- calc_obs_props(bact_obj2, "tax_data")
 ```
 
 ```{r}
-bact_taxa <- read.table("../data/FG_Bact_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
-fungi_all_taxa <- read.table("../data/FG_Fungi_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
-fungi_AMF_taxa <- read.table("../data/FG_AMF_ASV_Taxonomy.csv", header = T, check.names = F, sep = ",")
+print(bact_obj2$data$ASV_props)
 ```
 
-Note that knitr sets the working directory to the same directory of the Rmarkdown file. Since this Rmarkdown file is made in my code folder in my R project and the microbial data is in the data folder, I have to specify the working directory of the data tables within the read.table function. 
+
+#### Get per-taxon information
+We currently have values for the abundance of each ASV, but not each taxon. To get information on the taxa, sum the abundance per-taxon and add the results to the taxmap object in a new table called "tax_abund". 
+```{r}
+bact_obj2$data$tax_abund <- calc_taxon_abund(bact_obj2, "tax_data",
+                                             cols = sample_data$Sample_ID)
+```
+
+Calculate the number of samples that have reads for each taxon.
+```{r}
+bact_obj2$data$tax_occ <- calc_n_samples(bact_obj2, "tax_abund", 
+                                         groups = sample_data$Management_Type, 
+                                         cols = sample_data$Sample_ID)
+```
  
+```{r}
+print(bact_obj2)
+```
  
- 
-### Microbial diversity
-#### Estimate diversity with effective number of ASVs using hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
 
-The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
-q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
-q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
-q = 2 overweighs abundant ASVs. 
-
-The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
-```{r}
-sample <- (colnames(bact_count))
-management_type <- c(rep("Remnant", 29), rep("Restoration", 28))
-hierarchy_table <- cbind(sample, management_type)
-colnames(hierarchy_table) <- c("Sample", "Management_type")
-
-hierarchy_table <- as.data.frame(hierarchy_table)
-```
-
-Test whether diversity values differ by management type
-```{r}
-(bactq0 <- div_test(bact_count, qvalue = 0, hierarchy = hierarchy_table))
-(bactq1 <- div_test(bact_count, qvalue = 1, hierarchy = hierarchy_table))
-(bactq2 <- div_test(bact_count, qvalue = 2, hierarchy = hierarchy_table))
-
-(allfungiq0 <- div_test(fungi_all_count, qvalue = 0, hierarchy = hierarchy_table))
-(allfungiq1 <- div_test(fungi_all_count, qvalue = 1, hierarchy = hierarchy_table))
-(allfungiq2 <- div_test(fungi_all_count, qvalue = 2, hierarchy = hierarchy_table))
-
-(AMFfungiq0 <- div_test(fungi_AMF_count, qvalue = 0, hierarchy = hierarchy_table))
-(AMFfungiq1 <- div_test(fungi_AMF_count, qvalue = 1, hierarchy = hierarchy_table))
-(AMFfungiq2 <- div_test(fungi_AMF_count, qvalue = 2, hierarchy = hierarchy_table))
-```
-
-Create a table of summary statistics
-```{r}
-microbe_type <- c("bact", "bact", "bact", "fungi_all", "fungi_all", "fungi_all", "fungi_AMF", "fungi_AMF", "fungi_AMF")
-div_order <- c("q1", "q2", "q3", "q1", "q2", "q3","q1", "q2", "q3")
-test_statistic <- c("W", "W", "t", "W", "t", "t", "t", "t", "W")
-test_stat_value <- c(418, 278, -3.70, 547, 1.08, -0.16, 0.42, -1.86, 305)
-p_value <- c(0.85, 0.041, 0.00054, 0.025, 0.28, 0.87, 0.68, 0.069, 0.11)
-(diversity_summary_table <- as.data.frame(cbind(microbe_type, div_order, test_statistic, test_stat_value, p_value)))
-(diversity_summary_table <- diversity_summary_table %>% mutate_at(c('test_stat_value', 'p_value'), as.numeric))
-```
-
-
-### Visualize diversity among remnant and restoration soils
-
-First, use the model outputs from the div_test function to make combined tables with values for all levels of q (combine all of q0 table, with value columns (i.e., Hill numbers) of q1 & q2).
-```{r}
-bact_hill_table <- cbind(bactq0$data, bactq1$data$Value, bactq2$data$Value) 
-colnames(bact_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
-
-allfungi_hill_table <- cbind(allfungiq0$data, allfungiq1$data$Value, allfungiq2$data$Value) 
-colnames(allfungi_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
-
-AMFfungi_hill_table <- cbind(AMFfungiq0$data, AMFfungiq1$data$Value, AMFfungiq2$data$Value) 
-colnames(AMFfungi_hill_table) <- c("Plot", "Management_type", "q0", "q1", "q2")
-```
-
-Then use the reshape2 package melt each table so that all the hill numbers in are in one column.
-```{r}
-bact_hill_table_melted <- melt(bact_hill_table, id = c("Plot", "Management_type"))
-colnames(bact_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
-
-allfungi_hill_table_melted <- melt(allfungi_hill_table, id = c("Plot", "Management_type"))
-colnames(allfungi_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
-
-AMFfungi_hill_table_melted <- melt(AMFfungi_hill_table, id = c("Plot", "Management_type"))
-colnames(AMFfungi_hill_table_melted) <- c("Plot", "Management_type", "Diversity_order", "Hill_number")
-```
-
-Make boxplots of diversity at each order of q. First, create a list of the melted tables. Then create a function for the desired figure. Then use lapply to apply the figure function to the list. 
-```{r}
-melted_tables <- list(bact_hill_table_melted, allfungi_hill_table_melted, AMFfungi_hill_table_melted)
-
-make_diversity_plot <- function(df){
-  ggplot(data = df, aes(x = Diversity_order, y = Hill_number, fill = Management_type)) +
-  geom_boxplot() +
-  scale_fill_manual(values = c("#ffffff", "#a9a9a9")) +
-  xlab("Order of diversity (q)") +
-  ylab("Hill number") +
-  theme_classic(base_size = 10, base_family = "") +
-  theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
-          axis.title = element_blank(),
-          axis.text = element_text(face = "plain", color = "black", size = 12),
-          axis.ticks.length = unit(0.15, "cm"),
-          axis.ticks.x = element_blank(),
-          axis.line = element_line(size = 0.5),
-          legend.position = "none")
-} 
-
-diversity_plots <- lapply(melted_tables_list, make_diversity_plot)
-```
-
-Visualize the figures.
-```{r}
-diversity_plots[[1]]
-diversity_plots[[2]]
-diversity_plots[[3]]
-```
-
-Looks like there is an outlier in the all_fungi dataset. Check to verify.
-```{r}
-boxplot.stats(allfungi_hill_table_melted$Hill_number)$out
-```
-Yes, the value 7664 is an outlier.
-
-Now remove it from the dataset.
-```{r}
-outlier <- boxplot.stats(allfungi_hill_table_melted$Hill_number)$out
-allfungi_hill_table_melted_clean <- allfungi_hill_table_melted[-which(allfungi_hill_table_melted$Hill_number %in% outlier), ]
-```
-
-Create a new list that contains the updated allfungi dataset (i.e., without the outlier). Apply the figure function to the new list. 
-```{r}
-melted_tables_list2 <- list(bact_hill_table_melted, allfungi_hill_table_melted_clean, AMFfungi_hill_table_melted)
-diversity_plots2 <- lapply(melted_tables_list2, make_diversity_plot)
-diversity_plots2[[2]]
-```
-
-Stitch the figures together with the patchwork package.
-```{r}
-(grouped_diversity_figs <- (diversity_plots2[[1]] + diversity_plots2[[2]]) + diversity_plots2[[3]])
-```
 
