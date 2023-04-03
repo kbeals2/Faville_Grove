@@ -109,6 +109,56 @@ bact_obj2$data$tax_occ <- calc_n_samples(bact_obj2, "tax_abund",
 ```{r}
 print(bact_obj2)
 ```
+
+
+```{r}
+set.seed(7)
+
+heat_tree(bact_obj2,
+          node_label = bact_obj2$taxon_names(),
+          node_size = bact_obj2$n_obs(),
+          node_color = bact_obj2$data$tax_occ$Remnant,
+          node_size_axis_label = "ASV count",
+          node_color_axis_label = "Samples with reads",
+          layout = "davidson-harel",
+          initial_layout = "reingold-tilford")
+
+```
+
+### Microbial diversity
+#### Estimate diversity with effective number of ASVs using the hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
+
+The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
+q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
+q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
+q = 2 overweighs abundant ASVs. 
+
+The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
+```{r}
+library(hilldiv) 
+
+sample <- (sample_data$Sample_ID)
+management_type <- c(rep("Remnant", 29), rep("Restoration", 28))
+hierarchy_table <- cbind(sample, management_type)
+colnames(hierarchy_table) <- c("Sample", "Management_type")
+hierarchy_table <- as.data.frame(hierarchy_table)
+```
+
+```{r}
+bact_ASV_props <- bact_obj2$data$ASV_props
+bact_ASV_props <- select(bact_ASV_props, -c("taxon_id"))
+```
+
+
+Test whether diversity values differ by management type.
+```{r}
+(bactq0 <- div_test(bact_ASV_props, qvalue = 0, hierarchy = hierarchy_table))
+(bactq1 <- div_test(bact_ASV_props, qvalue = 1, hierarchy = hierarchy_table))
+(bactq2 <- div_test(bact_ASV_props, qvalue = 2, hierarchy = hierarchy_table))
+```
+
+
+ 
  
 
 
