@@ -231,7 +231,6 @@ Note that there are the same number of ASVs in the ASV_counts_taxa table that ar
 
 
 #### Remove singletons
-
 Remove low-aboundance counts from the tax_data table in the duplicate taxmap object by setting all counts with less than 2 reads (i.e., singletons) to zero.
 ```{r}
 bact_obj$data$ASV_counts_taxa <- zero_low_counts(bact_obj, "ASV_counts_taxa", min_count = 2)
