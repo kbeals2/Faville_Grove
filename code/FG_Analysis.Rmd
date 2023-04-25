@@ -11,74 +11,260 @@ output:
 
 First, install and/or load in the following packages. Multiple packages can be loaded simultaneously using the p_load function in the pacman package.  
 ```{r}
+r = getOption("repos")
+r["CRAN"] = "http://cran.us.r-project.org"
+options(repos = r)
+
+install.packages("pacman")
 library(pacman)
 p_load("fBasics", "rcompanion", "tidyverse", "metacoder", "vegan")
 ```
 
-
-### Loading and formatting data 
+## Pre-analysis
+### Loading and cleaning the data 
 ```{r}
-bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts_expanded.tsv")
-bact_taxa <- read_tsv("../data/FG_Bact_Taxonomy_expanded.txt")
 sample_data <- read_tsv("../data/Sample_metadata.txt")
+
+bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts.tsv")
+allfungi_count <- read_tsv("../data/FG_2022_Fungi_ASV_counts.tsv")
+AMFfungi_count <- read_tsv("../data/FG_2022_AMF_ASV_counts.tsv")
+
+bact_taxa <- read_tsv("../data/allrank_FG_2022_Bact_ASV.fa_classified.txt")
+allfungi_taxa <- read_tsv("../data/allrank_FG_2022_Fungi_ASV.fa_classified.txt")
+AMFfungi_taxa <- read_tsv("../data/allrank_FG_2022_AMF_ASV.fa_classified.txt")
 ```
 
-Combine the taxa and count tables by matching the "ASV_ID" columns in both tables.
+For each data set, remove the first 5 rows of text and rename the column. It will eventually contain just the ASV ID, so rename it "ASV_ID". Specify "1" because it is the first (and currently only) column in the dataframe.
 ```{r}
-bact_taxa$ASV_ID <- as.character(bact_taxa$ASV_ID)
-bact_count$ASV_ID <- as.character(bact_count$ASV_ID)
+bact_taxa <- bact_taxa %>% filter(!row_number() %in% c(1:5)) 
+bact_taxa <- bact_taxa %>% rename(ASV_ID = 1)
 
-bact_ASV_data <- left_join(bact_count, bact_taxa,
+allfungi_taxa <- allfungi_taxa %>% filter(!row_number() %in% c(1:5)) 
+allfungi_taxa <- allfungi_taxa %>% rename(ASV_ID = 1)
+
+AMFfungi_taxa <- AMFfungi_taxa %>% filter(!row_number() %in% c(1:5)) 
+AMFfungi_taxa <- AMFfungi_taxa %>% rename(ASV_ID = 1)
+```
+
+Then split the data in the first column into multiple columns. The deliminator here is a semicolon. This is equivalent to the "text to columns" function in Excel. The RDP taxonomy output file provides confidence scores ("cs") for each taxonomic rank. Use the "separate" function to split the data into multiple columns so that each piece of text separated by the semicolon delimiter is in its own column. Since we don't know which columns represent the true taxonomic rankings after Phylum for the fungi data sets, for now all of the columns after the "Class" ranking will be labeled as "Unkwn_number" for "Unknown".
+```{r}
+allfungi_taxa <- allfungi_taxa %>% 
+  separate(ASV_ID, c("ASV_ID", "Symbol", "Root", "Root_cs", "Kingdom", "Kingdom_cs", "Phylum", "Phylum_cs", "Unkwn1", "Unkwn1_cs", "Unkwn2", "Unkwn2_cs", "Unkwn3", "Unkwn3_cs", "Unkwn4", "Unkwn4_cs", "Unkwn5", "Unkwn5_cs"), ";")
+
+AMFfungi_taxa <- AMFfungi_taxa %>% 
+  separate(ASV_ID, c("ASV_ID", "Symbol", "Root", "Root_cs", "Kingdom", "Kingdom_cs", "Phylum", "Phylum_cs", "Unkwn1", "Unkwn1_cs", "Unkwn2", "Unkwn2_cs", "Unkwn3", "Unkwn3_cs", "Unkwn4", "Unkwn4_cs", "Unkwn5", "Unkwn5_cs"), ";")
+```
+
+Remove Symbol, Root, and Root_cs columns.
+```{r}
+allfungi_taxa <- allfungi_taxa %>% 
+  select(-c(Symbol, Root, Root_cs))
+
+AMFfungi_taxa <- AMFfungi_taxa %>% 
+  select(-c(Symbol, Root, Root_cs))
+```
+
+Looking more closely at the table, it's apparent that "Unkwn2" is Order and "Unkwn3" is Family. This means that "Unkwn1" must be Class and "Unkwn4" must be Genus. For some ASVs, the "Unkwn5" column contains species, but for many ASVs it just provides the genus followed by a standard "_sp" abbreviation for unknown species. The last two columns can be labeled as "Genus_Species". The letter-number string after the "|" in the Genus-Species column is a DOI that can be used for searching in databases.
+```{r}
+allfungi_taxa <- allfungi_taxa %>% 
+  rename(Class = 6,
+         Class_cs = 7,
+         Order = 8,
+         Order_cs = 9,
+         Family = 10,
+         Family_cs = 11,
+         Genus = 12,
+         Genus_cs = 13,
+         Genus_Species = 14,
+         Genus_Species_cs = 15)
+
+AMFfungi_taxa <- AMFfungi_taxa %>% 
+  rename(Class = 6,
+         Class_cs = 7,
+         Order = 8,
+         Order_cs = 9,
+         Family = 10,
+         Family_cs = 11,
+         Genus = 12,
+         Genus_cs = 13,
+         Genus_Species = 14,
+         Genus_Species_cs = 15)
+```
+
+Lastly, create a duplicate fungi taxonomy table with the confidence scores removed
+```{r}
+allfungi_taxa_clean <- allfungi_taxa %>% 
+  select(-c(Kingdom_cs, Phylum_cs, Class_cs, Order_cs, Family_cs, Genus_cs, Genus_Species_cs))
+
+AMFfungi_taxa_clean <- AMFfungi_taxa %>% 
+  select(-c(Kingdom_cs, Phylum_cs, Class_cs, Order_cs, Family_cs, Genus_cs, Genus_Species_cs))
+```
+
+The bacteria taxonomy table is a bit more complicated. It's apparent that not all rows have the same number of delimiters, which means that some ASVs were assigned a different number of taxonomic ranks than others. There are quite a lot of ASVs that were assigned an additional two or three rankings. The RDP sometimes provides Subclass and/or Suborder information for certain OTUs or ASVs. If all of the ASVs in the data set were assigned Subclass and Suborder rankings, these columns could simply be removed after the data is split into multiple columns. However, since this is true for only a subset of the ASVs, additional formatting is needed. Before beginning the formatting, split the data into multiple columns and label all of the columns after the "Class" ranking as "Unkwn_number" for "Unknown". Then remove the Symbol, Root, and Root_cs columns. 
+```{r}
+bact_taxa <- bact_taxa %>%
+  separate(ASV_ID, c("ASV_ID", "Symbol", "Root", "Root_cs", "Kingdom", "Kingdom_cs", "Phylum", "Phylum_cs", "Class", "Class_cs", "Unkwn1", "Unkwn1_cs", "Unkwn2", "Unkwn2_cs", "Unkwn3", "Unkwn3_cs", "Unkwn4", "Unkwn4_cs", "Unkwn5", "Unkwn5_cs"), ";")
+
+bact_taxa <- bact_taxa %>% 
+  select(-c(Symbol, Root, Root_cs))
+```
+
+To format the taxonomic rankings, create a table of just the ASVs that do not have missing information for column "Unkwn5".
+```{r}
+Unkwn5_taxa_bact <- bact_taxa %>%
+  filter(Unkwn5 != "NA")
+```
+
+There are 540 ASVs that have 2 extra taxonomic rankings. The taxon names in the "Unkwn5" column are genera and the names in the "Unkwn2" column are orders. This means that for these ASVs "Unkwn1" is Subclass, "Unkwn3" is Suborder, and "Unkwn4" is Family. Label these columns as such and then remove the Subclass and Suborder columns.
+```{r}
+Unkwn5_taxa_bact_labeled <- Unkwn5_taxa_bact %>% 
+  rename(Subclass = 8,
+         Subclass_cs = 9,
+         Order = 10,
+         Order_cs = 11,
+         Suborder = 12,
+         Suborder_cs = 13,
+         Family = 14, 
+         Family_cs = 15,
+         Genus = 16, 
+         Genus_cs = 17)
+
+Unkwn5_taxa_bact_labeled <- Unkwn5_taxa_bact_labeled %>% 
+  select(-c(Subclass, Subclass_cs, Suborder, Suborder_cs))
+```
+
+Do the same for the ASVs that have data in the "Unkwn4" columns and not in the "Unkwn5" columns.
+```{r}
+Unkwn4_taxa_bact <- bact_taxa %>%
+  filter(Unkwn4 != "NA") %>% 
+  filter(is.na(Unkwn5))
+```
+
+This data set has 1,935 ASVs which have 1 extra taxonomic ranking. Order is indicated in the "Unkwn1" column and we know that "Unkwn4" is Genus, and "Unkwn3" is Family. This means that the extra column is "Unkwn2", Suborder. Label these columns and then remove the Suborder column and "Unkwn5" columns.
+```{r}
+Unkwn4_taxa_bact_labeled <- Unkwn4_taxa_bact %>% 
+  rename(Order = 8,
+         Order_cs = 9,
+         Suborder = 10,
+         Suborder_cs = 11,
+         Family = 12,
+         Family_cs = 13,
+         Genus = 14, 
+         Genus_cs = 15)
+
+Unkwn4_taxa_bact_labeled <- Unkwn4_taxa_bact_labeled %>% 
+  select(-c(Suborder, Suborder_cs, Unkwn5, Unkwn5_cs))
+```
+
+Return to the master taxa table and remove all rows that have data in the "Unkwn4" column (i.e., keeping all rows for which "Unkwn4" is NA). Rows that have data in the "Unkwn5" column will also be removed by doing this since "Unkwn5" can only contain data if "Unkwn4" has data. Then remove the "Unkwn" columns.
+```{r}
+bact_taxa_clean <- bact_taxa %>% 
+  filter(is.na(Unkwn4))
+  
+bact_taxa_clean <- bact_taxa_clean %>% 
+  select(-c(Unkwn4, Unkwn4_cs, Unkwn5, Unkwn5_cs))  
+```
+
+Rename the columns with the correct taxonomic rankings.
+```{r}
+bact_taxa_clean <- bact_taxa_clean %>% 
+  rename(Order = 8,
+         Order_cs = 9,
+         Family = 10,
+         Family_cs = 11,
+         Genus = 12,
+         Genus_cs = 13)
+```
+
+Finally, add the Unkwn4 and Unkwn5 data sets to the cleaned master data set. Lastly, create a new table without the confidence scores.
+```{r}
+bact_taxa_clean <- rbind(bact_taxa_clean, Unkwn4_taxa_bact_labeled, Unkwn5_taxa_bact_labeled)
+
+bact_taxa_clean2 <- bact_taxa_clean %>% 
+  select(-c(Kingdom_cs, Phylum_cs, Class_cs, Order_cs, Family_cs, Genus_cs))
+```
+
+
+### Formatting the data
+First, combine the taxa and count tables by matching the "ASV_ID" columns in both tables.
+```{r}
+bact_taxa_clean2$ASV_ID <- as.character(bact_taxa_clean2$ASV_ID)
+bact_count$ASV_ID <- as.character(bact_count$ASV_ID)
+bact_ASV_data <- left_join(bact_count, bact_taxa_clean2,
+                           by = c("ASV_ID" = "ASV_ID"))
+
+allfungi_taxa_clean$ASV_ID <- as.character(allfungi_taxa_clean$ASV_ID)
+allfungi_count$ASV_ID <- as.character(allfungi_count$ASV_ID)
+allfungi_ASV_data <- left_join(allfungi_count, allfungi_taxa_clean,
+                           by = c("ASV_ID" = "ASV_ID"))
+
+AMFfungi_taxa_clean$ASV_ID <- as.character(AMFfungi_taxa_clean$ASV_ID)
+AMFfungi_count$ASV_ID <- as.character(AMFfungi_count$ASV_ID)
+AMFfungi_ASV_data <- left_join(AMFfungi_count, AMFfungi_taxa_clean,
                            by = c("ASV_ID" = "ASV_ID"))
 ```
 
 
 #### Convert to taxmap format
-
-Create a taxmap object using the metacoder package. A taxmap object integrates an ASV or OTU count table with a taxonomy table. This allows us to perform the same manipulations to both tables simultaneously.
+Create a taxmap object using the metacoder package. A taxmap object can contain multiple tables, which is useful if you want to create complimentary tables to your initial table. When these tables are in the same object, you can perform the same manipulations on multiple tables simultaneously. For now, these taxmap objects will look very similar to the "_ASV_data" tables. We can assign a taxon_id for each OTU_ID with the parse_tax_data function with class_cols parameter. The default name of the data set is tax_data, but we can give it a more intuitive title like "ASV_counts_taxa" since the data set contains counts for each ASV as well as the full taxonomy information for each ASV.
 ```{r}
 bact_obj <- parse_tax_data(bact_ASV_data,
-                      class_cols = "Taxonomy", # the column that contains taxonomic information
-                      class_sep = ";", # The character used to separate taxa in the classification
-                      class_regex = "^([a-z]{0,1})_{0,2}(.*)$", # Regex identifying where the data for each taxon is
-                      class_key = c(tax_rank = "taxon_rank", # A key describing each regex capture group
-                                    tax_name = "taxon_name"))
+                            class_cols = "ASV_ID")
+
+allfungi_obj <- parse_tax_data(allfungi_ASV_data,
+                            class_cols = "ASV_ID")
+
+AMFfungi_obj <- parse_tax_data(AMFfungi_ASV_data,
+                            class_cols = "ASV_ID")
+
+names(bact_obj$data) <- "ASV_counts_taxa"
+names(allfungi_obj$data) <- "ASV_counts_taxa"
+names(AMFfungi_obj$data) <- "ASV_counts_taxa"
 ```
 
 ```{r}
 print(bact_obj)
+print(allfungi_obj)
+print(AMFfungi_obj)
 ```
-We have now created a taxmap object that contains an ASV count table (tax_data) and a taxonomy table (class_data). The first line tells us that the ASVs are assigned to 3,720 unique taxa. The second line tells us how the taxa are related to one another in the tree. Note that both tables have a column called "taxon_id" which associates rows in the table to a taxa in the taxonomy.
-
-Create a duplicate of the taxmap bact_obj that we can further manipulate. 
-```{r}
-bact_obj2 <- bact_obj
-```
+Note that there are the same number of ASVs in the ASV_counts_taxa table that are in each of the "_ASV_data" tables.
 
 
 #### Remove singletons
 
 Remove low-aboundance counts from the tax_data table in the duplicate taxmap object by setting all counts with less than 2 reads (i.e., singletons) to zero.
 ```{r}
-bact_obj2$data$tax_data <- zero_low_counts(bact_obj2, data = "tax_data", min_count = 2)
+bact_obj$data$ASV_counts_taxa <- zero_low_counts(bact_obj, "ASV_counts_taxa", min_count = 2)
+allfungi_obj$data$ASV_counts_taxa <- zero_low_counts(allfungi_obj, "ASV_counts_taxa", min_count = 2)
+AMFfungi_obj$data$ASV_counts_taxa <- zero_low_counts(AMFfungi_obj, "ASV_counts_taxa", min_count = 2)
 ```
-Found 63,573 counts of less than 2 (out of 2,061,918 counts total).
+Found 63,573 counts of less than 2 (out of 2,061,918 counts total) for bacteria.
+Found 2,415 counts of less than 2 (out of 436,848 counts total) for all fungi.
+Found 1,721 counts of less than 2 (out of 299,649 counts total) for AMF fungi.
 
-Now we have ASVs that no longer contain any observations, as we can see with the following.
+Now there are ASVs that no longer contain any observations, as can be seen with the following.
 ```{r}
-no_reads_bact <- rowSums(bact_obj2$data$tax_data[, sample_data$Sample_ID]) == 0
+no_reads_bact <- rowSums(bact_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
 sum(no_reads_bact)
+
+no_reads_allfungi <- rowSums(allfungi_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
+sum(no_reads_allfungi)
+
+no_reads_AMFfungi <- rowSums(AMFfungi_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
+sum(no_reads_AMFfungi)
 ```
 
-There are now 8,911 ASVs that have no reads. We can remove these ASVs using filter_obs, which is used to filter data associated with a taxonomy in a taxmap object. One of the advantages of integrating the ASV count table and taxonomy table into a taxmap object is that the ASVs with no reads can be filtered out of both tables at the same time.
+There are now 8,911 bacterial ASVs, 7 all fungal ASVs, and no AMF fungal ASVs that have no reads. These ASVs can be removed using filter_obs, which is used to filter data associated with a taxonomy in a taxmap object. 
 ```{r}
-bact_obj2 <- filter_obs(bact_obj2, data = "tax_data", ! no_reads_bact, drop_taxa = TRUE)
+bact_obj <- filter_obs(bact_obj, data = "ASV_counts_taxa", ! no_reads_bact, drop_taxa = TRUE)
+allfungi_obj <- filter_obs(allfungi_obj, data = "ASV_counts_taxa", ! no_reads_allfungi, drop_taxa = TRUE)
 ```
 
 ```{r}
-print(bact_obj2)
+print(bact_obj)
+print(allfungi_obj)
 ```
-We can see that the number of rows decreased in both the tax_data (i.e., ASV counts) and the class_data (i.e., taxonomy) tables. Specifically, the tax_data table now has 8,911 fewer rows than it did previously.
+We can see that the number of rows decreased in both the tax_data (i.e., ASV counts) and the class_data (i.e., taxonomy) tables. Specifically, the ASV_counts_taxa tablse now have fewer rows than it did previously.
 
 
 #### Account for un-even sampling 
