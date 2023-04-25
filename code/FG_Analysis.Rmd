@@ -258,24 +258,31 @@ There are now 8,911 bacterial ASVs, 7 all fungal ASVs, and no AMF fungal ASVs th
 ```{r}
 bact_obj <- filter_obs(bact_obj, data = "ASV_counts_taxa", ! no_reads_bact, drop_taxa = TRUE)
 allfungi_obj <- filter_obs(allfungi_obj, data = "ASV_counts_taxa", ! no_reads_allfungi, drop_taxa = TRUE)
+AMFfungi_obj <- filter_obs(AMFfungi_obj, data = "ASV_counts_taxa", ! no_reads_AMFfungi, drop_taxa = TRUE)
 ```
 
 ```{r}
 print(bact_obj)
 print(allfungi_obj)
+print(AMFfungi_obj)
 ```
-We can see that the number of rows decreased in both the tax_data (i.e., ASV counts) and the class_data (i.e., taxonomy) tables. Specifically, the ASV_counts_taxa tablse now have fewer rows than it did previously.
+We can see that the number of rows decreased in the ASV_counts_taxa tables by the exact number of ASVs that were updated to have no reads. 
 
 
-#### Account for un-even sampling 
-To account for un-even sampling, convert counts to proportions and add the results to the taxmap object in a new table called "ASV_props". Rarefaction is another popular method for normalization, but the large downside is that it can result in discarding a lot of data.
+#### Account for un-even sampling
+To account for un-even sampling, convert counts to proportions  (i.e., relative abundance) and add the results to each taxmap object in a new table called "ASV_props".
 ```{r}
-bact_obj2$data$ASV_props <- calc_obs_props(bact_obj2, "tax_data")
+bact_obj$data$ASV_props <- calc_obs_props(bact_obj, "ASV_counts_taxa")
+allfungi_obj$data$ASV_props <- calc_obs_props(allfungi_obj, "ASV_counts_taxa")
+AMFfungi_obj$data$ASV_props <- calc_obs_props(AMFfungi_obj, "ASV_counts_taxa")
 ```
 
-```{r}
-print(bact_obj2$data$ASV_props)
-```
+Now the data are ready for analysis.
+
+
+
+## Analysis
+
 
 
 #### Get per-taxon information
