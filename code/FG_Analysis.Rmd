@@ -281,7 +281,75 @@ Now the data are ready for analysis.
 
 
 ## Analysis
+### Assign life history strategies for bacterial and fungal taxa (i.e., oligotrophic and copiotrophic)
 
+Create a duplicate bacterial taxonomy table and add a column for potential life history strategy.
+```{r}
+bact_functions <- bact_taxa_clean2
+bact_functions$potential_strategy <- "NA"
+```
+
+```{r}
+bact_functions <- bact_functions %>% 
+  mutate(potential_strategy = case_when(Phylum == "Verrucomicrobia" ~ "Oligotrophic",
+                                        Phylum == "Acidobacteria" ~ "Oligotrophic",
+                                        Phylum == "Chloroflexi" ~ "Oligotrophic",
+                                        Phylum == "Firmicutes" ~ "Copiotrophic",
+                                        Class == "Betaproteobacteria" ~ "Copiotrophic",
+                                        Class == "Gammaproteobacteria" ~ "Copiotrophic",
+                                        Family == "Micrococcaceae" ~ "Copiotrophic",
+                                        Family == "Rubrobacteraceae" ~ "Oligotrophic"))
+```
+
+Identify proportion of ASVs that potentially exhibit oligtrophic and copiotrophic strategies by filtering the data table for only rows in which potential_strategy has data (i.e., is not coded as “NA”).
+```{r}
+bact_functions %>% 
+  filter(potential_strategy != "NA") %>% 
+  nrow()
+```
+
+```{r}
+nrow(bact_functions)
+```
+
+```{r}
+13288/36174
+```
+These potential oligotrophic and copiotrophic ASVs account for approximately 37% of the total bacterial diversity.
+
+Identify proportion of sequences that potentially exhibit oligotrophic and copiotrophic strategies. First, extract the ASV_ID and potential_strategy columns and add them to a new table with the ASV counts. Then keep only the rows for which potential strategy is defined. Then remove the potential_strategy column and transform the ASV_ID column to row names (the table needs to be pared down to just numerical data since we will sum across all columns). Then calculate the total number of sequences for each row and then calculate the sum of all sequences. Finally, calculate the total number of all bacterial sequences and calculate the proportion of bacterial sequences that belong to oligotrophic or copiotrophic strategies.
+```{r}
+potential_strategies <- bact_functions %>% 
+  select(c("ASV_ID", "potential_strategy"))
+
+bact_count_potential_strategies <- left_join(bact_count, potential_strategies,
+                                             by = c("ASV_ID" = "ASV_ID"))
+
+bact_count_potential_strategies <- bact_count_potential_strategies %>% 
+  filter(potential_strategy != "NA")
+
+bact_count_potential_strategies2 <- bact_count_potential_strategies %>%
+  select(-c("potential_strategy")) %>% 
+  tibble::column_to_rownames("ASV_ID")
+
+bact_count_potential_strategies2 <- bact_count_potential_strategies2 %>%
+  mutate(Seq_sum = rowSums(.,))
+
+sum(bact_count_potential_strategies2$Seq_sum)
+```
+
+```{r}
+bact_count2 <- bact_count %>% 
+  tibble::column_to_rownames("ASV_ID") %>% 
+  mutate(Seq_sum = rowSums(.,))
+
+sum(bact_count2$Seq_sum) 
+```
+
+```{r}
+(1430984/3802072)*100
+```
+Approximately 38% of the total number of bacterial sequences belong to potentially oligotrophic or copiotrophic taxa.
 
 
 #### Get per-taxon information
