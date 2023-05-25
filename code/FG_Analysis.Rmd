@@ -17,13 +17,14 @@ options(repos = r)
 
 install.packages("pacman")
 library(pacman)
-p_load("fBasics", "rcompanion", "tidyverse", "metacoder", "vegan")
+p_load("fBasics", "rcompanion", "tidyverse", "metacoder", "vegan", "lme4", "car", "ggResidpanel", "performance", "patchwork")
 ```
 
 ## Pre-analysis
 ### Loading and cleaning the data 
 ```{r}
 sample_data <- read_tsv("../data/Sample_metadata.txt")
+plant_survey <- read_tsv("../data/FG_plant_survey.txt")
 
 bact_count <- read_tsv("../data/FG_2022_Bact_ASV_counts.tsv")
 allfungi_count <- read_tsv("../data/FG_2022_Fungi_ASV_counts.tsv")
@@ -243,13 +244,13 @@ Found 1,721 counts of less than 2 (out of 299,649 counts total) for AMF fungi.
 
 Now there are ASVs that no longer contain any observations, as can be seen with the following.
 ```{r}
-no_reads_bact <- rowSums(bact_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
+no_reads_bact <- rowSums(bact_obj$data$ASV_counts_taxa[, sample_data$sample_id]) == 0
 sum(no_reads_bact)
 
-no_reads_allfungi <- rowSums(allfungi_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
+no_reads_allfungi <- rowSums(allfungi_obj$data$ASV_counts_taxa[, sample_data$sample_id]) == 0
 sum(no_reads_allfungi)
 
-no_reads_AMFfungi <- rowSums(AMFfungi_obj$data$ASV_counts_taxa[, sample_data$sample_ID]) == 0
+no_reads_AMFfungi <- rowSums(AMFfungi_obj$data$ASV_counts_taxa[, sample_data$sample_id]) == 0
 sum(no_reads_AMFfungi)
 ```
 
@@ -268,6 +269,13 @@ print(AMFfungi_obj)
 We can see that the number of rows decreased in the ASV_counts_taxa tables by the exact number of ASVs that were updated to have no reads. 
 
 
+Remove singletons from bact_ASV_data table.
+```{r}
+bact_ASV_data2 <- bact_ASV_data %>%
+  filter(if_any(where(is.numeric), ~ . > 1))
+```
+
+
 #### Account for un-even sampling
 To account for un-even sampling, convert counts to proportions  (i.e., relative abundance) and add the results to each taxmap object in a new table called "ASV_props".
 ```{r}
@@ -281,30 +289,34 @@ Now the data are ready for analysis.
 
 
 ## Analysis
-### Assign life history strategies for bacterial and fungal taxa (i.e., oligotrophic and copiotrophic)
 
-Create a duplicate bacterial taxonomy table and add a column for potential life history strategy.
-```{r}
-bact_functions <- bact_taxa_clean2
-bact_functions$potential_strategy <- "NA"
-```
+### Assign life history strategies for bacterial taxa (i.e., oligotrophic and copiotrophic)
 
+First, create a duplicate table of the bact_ASV_data2 table. Then select just the ASV_ID and taxonomy information columns.
 ```{r}
+bact_functions <- bact_ASV_data2
+
 bact_functions <- bact_functions %>% 
-  mutate(potential_strategy = case_when(Phylum == "Verrucomicrobia" ~ "Oligotrophic",
-                                        Phylum == "Acidobacteria" ~ "Oligotrophic",
-                                        Phylum == "Chloroflexi" ~ "Oligotrophic",
-                                        Phylum == "Firmicutes" ~ "Copiotrophic",
-                                        Class == "Betaproteobacteria" ~ "Copiotrophic",
-                                        Class == "Gammaproteobacteria" ~ "Copiotrophic",
-                                        Family == "Micrococcaceae" ~ "Copiotrophic",
-                                        Family == "Rubrobacteraceae" ~ "Oligotrophic"))
+  select(ASV_ID, Kingdom, Phylum, Class, Order, Family, Genus)
 ```
 
-Identify proportion of ASVs that potentially exhibit oligtrophic and copiotrophic strategies by filtering the data table for only rows in which potential_strategy has data (i.e., is not coded as “NA”).
+Import table with oligotrophic and copiotrophic life history strategy assignments. 
+```{r}
+bact_life_strategy_assignments <- read_tsv("../data/bact_life_strategy_assignments_Stone2023.txt")
+```
+
+If the Genus column matches
+```{r}
+bact_life_strategy_assignments_abbv <- bact_life_strategy_assignments %>% 
+  select(Genus, life_strategy)
+
+bact_functions <- left_join(bact_functions, bact_life_strategy_assignments_abbv, by = "Genus")
+```
+
+Identify proportion of ASVs that belong to oligtrophic or copiotrophic taxa by filtering the data table for only rows in which life_strategy has data (i.e., is not coded as “NA”).
 ```{r}
 bact_functions %>% 
-  filter(potential_strategy != "NA") %>% 
+  filter(life_strategy != "NA") %>% 
   nrow()
 ```
 
@@ -313,112 +325,1067 @@ nrow(bact_functions)
 ```
 
 ```{r}
-13288/36174
+3070/27263
 ```
-These potential oligotrophic and copiotrophic ASVs account for approximately 37% of the total bacterial diversity.
+These oligotrophic and copiotrophic taxa account for approximately 11% of the total bacterial diversity.
 
-Identify proportion of sequences that potentially exhibit oligotrophic and copiotrophic strategies. First, extract the ASV_ID and potential_strategy columns and add them to a new table with the ASV counts. Then keep only the rows for which potential strategy is defined. Then remove the potential_strategy column and transform the ASV_ID column to row names (the table needs to be pared down to just numerical data since we will sum across all columns). Then calculate the total number of sequences for each row and then calculate the sum of all sequences. Finally, calculate the total number of all bacterial sequences and calculate the proportion of bacterial sequences that belong to oligotrophic or copiotrophic strategies.
+Identify proportion of sequences that belong to oligotrophic or copiotrophic taxa. First, create a new table called life_strategies_ASV_counts by selecting just the ASV_ID and life_strategy columns from the bact_functions table. Then join the count data from the bact_ASV_data2 table, matching the tables by ASV_ID. Then create a new table that keeps only the rows for which life strategy is defined. From this new table, remove the taxonomy and life_strategy columns and transform the ASV_ID column to row names (the table needs to be pared down to just numerical data since we will sum across all columns). Then add a column that calculates the total number of sequences for each row. Then calculate the sum of all sequences. 
 ```{r}
-potential_strategies <- bact_functions %>% 
-  select(c("ASV_ID", "potential_strategy"))
+life_strategies_ASV_counts <- bact_functions %>% 
+  select(c("ASV_ID", "life_strategy"))
 
-bact_count_potential_strategies <- left_join(bact_count, potential_strategies,
-                                             by = c("ASV_ID" = "ASV_ID"))
+life_strategies_ASV_counts <- left_join(bact_ASV_data2, life_strategies_ASV_counts,
+                                             by = "ASV_ID")
 
-bact_count_potential_strategies <- bact_count_potential_strategies %>% 
-  filter(potential_strategy != "NA")
+life_strategies_ASV_counts2 <- life_strategies_ASV_counts %>% 
+  filter(life_strategy != "NA")
 
-bact_count_potential_strategies2 <- bact_count_potential_strategies %>%
-  select(-c("potential_strategy")) %>% 
+life_strategies_ASV_counts2 <- life_strategies_ASV_counts2 %>%
+  select(-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "life_strategy")) %>% 
   tibble::column_to_rownames("ASV_ID")
 
-bact_count_potential_strategies2 <- bact_count_potential_strategies2 %>%
+life_strategies_ASV_counts2 <- life_strategies_ASV_counts2 %>%
   mutate(Seq_sum = rowSums(.,))
 
-sum(bact_count_potential_strategies2$Seq_sum)
+sum(life_strategies_ASV_counts2$Seq_sum)
 ```
 
+Create an abbreviated life_strategies_ASV_counts table that has taxonomy and life strategy columns removed. Repeat the same last two steps as above to calculate the total number of all bacterial sequences. 
 ```{r}
-bact_count2 <- bact_count %>% 
-  tibble::column_to_rownames("ASV_ID") %>% 
+life_strategies_ASV_counts_abbv <- life_strategies_ASV_counts %>%
+  select(-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "life_strategy")) %>% 
+  tibble::column_to_rownames("ASV_ID")
+
+life_strategies_ASV_counts_abbv <- life_strategies_ASV_counts_abbv %>%
   mutate(Seq_sum = rowSums(.,))
 
-sum(bact_count2$Seq_sum) 
+sum(life_strategies_ASV_counts_abbv$Seq_sum) 
+```
+
+Finally, divide the two sums to calculate the proportion of bacterial sequences that belong to oligotrophic or copiotrophic taxa.
+```{r}
+(801310/3789016)*100
+```
+Approximately 21% of the total number of bacterial sequences belong to oligotrophic or copiotrophic taxa.
+
+
+Ultimately, we need oligotrophic richness, oligotrophic abundance, copiotrophic richness, and copiotrophic abundance for each sample.
+life_strategies_ASV_counts: all ASVs (singletons removed) 
+life_strategies_ASV_counts2: only ASVs with life strategy assigned (singletons removed)
+
+We need count table of all ASVs (singletons removed) with life strategy column 
+
+Using the life_strategies_ASV_counts table, make a new table that just the life_strategy column retained (i.e., without the taxonomy columns).
+```{r}
+life_strategies_ASV_counts_no_tax <- life_strategies_ASV_counts %>%
+  select(-c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")) 
+```
+
+Melt the table so that ASV count is its own column, using the reshape2 package.
+```{r}
+install.packages("reshape2")
+library(reshape2)
+
+life_strategies_ASV_counts_melted <- melt(life_strategies_ASV_counts_no_tax, id = c("ASV_ID", "life_strategy"))
+```
+
+Create tables of total richness and oligotrophic and copiotrophic richness for each sample. To calculate total richness: group by variable (i.e., sample), then filter by rows that have a count of greater than 1 (i.e., that ASV is present in the sample), then tally (i.e., count) the number rows (i.e., ASVs) and display this count in a column called "total_rich". To calculate richness of oligotrophs and richness of copiotrophs: group by variable, filter by rows that have a count greater than 1, then filter by rows that are assigned as oligotrophic or copiotrophic and count the number of rows and display this count in columns called "oligo_rich" and "copio_rich".
+```{r}
+bact_rich <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>%
+  filter(value > 0) %>%
+  tally(., name = "total_rich")
+
+bact_oligo_rich <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>% 
+  filter(value > 0) %>%
+  filter(life_strategy == "Oligotrophic") %>% 
+  tally(., name = "oligo_rich")
+
+bact_copio_rich <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>% 
+  filter(value > 0) %>%
+  filter(life_strategy == "Copiotrophic") %>% 
+  tally(., name = "copio_rich")
+```
+
+Create tables of total abundance and oligotrophic and copiotrophic abundance for each sample. To calculate total abundance: group by variable, count the number in the value column which represent sequence counts, and display in a column called "total_abund". To calculate oligotrophic and copiotrophic abundance: group by variable, filter by rows that are assigned as oligotrophic or copiotrophic, and count the number in the value column and display in columns called "oligo_abund" and "copio_abund".
+```{r}
+bact_abund <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>% 
+  tally(value, name = "total_abund")
+
+bact_oligo_abund <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>% 
+  filter(life_strategy == "Oligotrophic") %>% 
+  tally(value, name = "oligo_abund")
+
+bact_copio_abund <- life_strategies_ASV_counts_melted %>% 
+  group_by(variable) %>% 
+  filter(life_strategy == "Copiotrophic") %>% 
+  tally(value, name = "copio_abund")
+```
+
+Combine these tables into one data frame and rename columns. 
+```{r}
+bact_oligo_copio_table <- cbind(bact_rich, bact_abund$total_abund, bact_oligo_rich$oligo_rich, bact_copio_rich$copio_rich, bact_oligo_abund$oligo_abund, bact_copio_abund$copio_abund)
+  
+bact_oligo_copio_table <- bact_oligo_copio_table %>%
+  rename(sample_id = 1,
+         total_bact_rich = 2,
+         total_bact_abund = 3, 
+         bact_oligo_rich = 4,
+         bact_copio_rich = 5,
+         bact_oligo_abund = 6, 
+         bact_copio_abund = 7)
+```
+
+Create oligo and copio proportions columns.
+```{r}
+bact_oligo_copio_table <- bact_oligo_copio_table %>% 
+  mutate(bact_oligo_rich_prop = bact_oligo_rich/total_bact_rich,
+         bact_copio_rich_prop = bact_copio_rich/total_bact_rich,
+         bact_oligo_abund_prop = bact_oligo_abund/total_bact_abund,
+         bact_copio_abund_prop = bact_copio_abund/total_bact_abund)
+```
+
+Add this table to the sample_data table, aligning by sample_id column in both tables.
+```{r}
+sample_data <- left_join(sample_data, bact_oligo_copio_table, by = "sample_id")
+```
+
+
+### Hypothesis testing: Management type
+Hypothesis 1A: We hypothesize that copiotrophic microbial taxa will increase in relative abundance in remnant soils relative to restoration soils. 
+Hypothesis 1B: We hypothesize that an increase in copiotrophic taxa would yield faster C mineralization rates in remnant soils relative to those in restoration soils. 
+
+Specifically: 
+- Remnant soils will have higher extracellular enzyme activity rates compared to restoration soils
+- Relative abundance of copiotrophic taxa will be positively correlated with extracellular enzyme activity rates
+
+For the relative abundance microbial data, we will use binomial GLMs (generalized linear models).
+
+#### Hypothesis 1A
+Test for differences in copiotrophic richness among remnant and restoration soils.
+```{r}
+copio_rich_management_mixed_model <- glmer(cbind(bact_copio_rich, total_bact_rich) ~ management_type + (1|habitat_type_google_maps), 
+                             family = binomial,
+                             data = sample_data)
+
+copio_rich_management_model <- glm(cbind(bact_copio_rich, total_bact_rich) ~ management_type, 
+                             family = binomial,
+                             data = sample_data)
+
+resid_panel(copio_rich_management_model, smoother = TRUE, qqbands = TRUE)
+plot(copio_rich_management_model)
+```
+
+
+```{r}
+summary(copio_rich_management_model)
+```
+P-value is above the 0.05 threshold. Copiotrophic richness is similar among remnant and restoration soils.
+
+
+```{r}
+copio_rich_management_model2 <- glm(bact_copio_rich ~ management_type + 
+                                    offset(log(total_bact_rich)),
+                                    family = "poisson",
+                                    data = sample_data)
 ```
 
 ```{r}
-(1430984/3802072)*100
-```
-Approximately 38% of the total number of bacterial sequences belong to potentially oligotrophic or copiotrophic taxa.
-
-
-#### Get per-taxon information
-We currently have values for the abundance of each ASV, but not each taxon. To get information on the taxa, sum the abundance per-taxon and add the results to the taxmap object in a new table called "tax_abund". 
-```{r}
-bact_obj2$data$tax_abund <- calc_taxon_abund(bact_obj2, "tax_data",
-                                             cols = sample_data$Sample_ID)
-```
-
-Calculate the number of samples that have reads for each taxon.
-```{r}
-bact_obj2$data$tax_occ <- calc_n_samples(bact_obj2, "tax_abund", 
-                                         groups = sample_data$Management_Type, 
-                                         cols = sample_data$Sample_ID)
-```
- 
-```{r}
-print(bact_obj2)
-```
-
-
-```{r}
-set.seed(7)
-
-heat_tree(bact_obj2,
-          node_label = bact_obj2$taxon_names(),
-          node_size = bact_obj2$n_obs(),
-          node_color = bact_obj2$data$tax_occ$Remnant,
-          node_size_axis_label = "ASV count",
-          node_color_axis_label = "Samples with reads",
-          layout = "davidson-harel",
-          initial_layout = "reingold-tilford")
-
-```
-
-### Microbial diversity
-#### Estimate diversity with effective number of ASVs using the hilldiv package. The order of diversity (q) specifies sensitivity towards abundant and rare ASVs.
-
-The hilldiv package requires an ASV table in which each column is a sample and each row is an ASV. Data can be raw counts or relative proportions.
-q = 0 calculates raw richness. It only considers whether an ASV is present or absent. The same weight is given to all ASVs regardless of abundance (i.e., rare taxa are weighted the same as abundant taxa). 
-q = 1 weighs ASVs by their frequency without disproportionately favoring either rare or abundant ones.
-q = 2 overweighs abundant ASVs. 
-
-The first step is to create a hierarchy table that has the appropriate metadata assigned to each sample.
-```{r}
-library(hilldiv) 
-
-sample <- (sample_data$Sample_ID)
-management_type <- c(rep("Remnant", 29), rep("Restoration", 28))
-hierarchy_table <- cbind(sample, management_type)
-colnames(hierarchy_table) <- c("Sample", "Management_type")
-hierarchy_table <- as.data.frame(hierarchy_table)
+plot(copio_rich_management_model2)
 ```
 
 ```{r}
-bact_ASV_props <- bact_obj2$data$ASV_props
-bact_ASV_props <- select(bact_ASV_props, -c("taxon_id"))
+summary(copio_rich_management_model2)
 ```
 
 
-Test whether diversity values differ by management type.
+
+Test for differences in oligotrophic richness among remnant and restoration soils.
 ```{r}
-(bactq0 <- div_test(bact_ASV_props, qvalue = 0, hierarchy = hierarchy_table))
-(bactq1 <- div_test(bact_ASV_props, qvalue = 1, hierarchy = hierarchy_table))
-(bactq2 <- div_test(bact_ASV_props, qvalue = 2, hierarchy = hierarchy_table))
+oligo_rich_management_mixed_model <- glmer(cbind(bact_oligo_rich, total_bact_rich) ~ management_type + (1|transect), 
+                             family = binomial,
+                             data = sample_data)
+
+oligo_rich_management_model <- glm(cbind(bact_oligo_rich, total_bact_rich) ~ management_type, 
+                             family = binomial,
+                             data = sample_data)
+
+resid_panel(oligo_rich_management_model, smoother = TRUE, qqbands = TRUE)
+```
+
+```{r}
+summary(oligo_rich_management_model)
+```
+P-value is above the 0.05 threshold. Oligotrophic richness is similar among remnant and restoration soils.
+
+
+Figures of copiotrophic and oligotrophic richness among remnant and restoration soils.
+```{r}
+copio_rich_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = bact_copio_rich_prop)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  scale_y_continuous(limits = c(0.382, 0.426), breaks = c(0.39, 0.40, 0.41, 0.42)) +
+  xlab("\nLand management type") + 
+  ylab("Proportion copiotrophic (richness)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none")
+
+oligo_rich_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = bact_oligo_rich_prop)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  xlab("\nLand management type") + 
+  ylab("Proportion oligotrophic (richness)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none")
+```
+
+Arrange figures side-by-side using the patchwork package.
+```{r}
+(management_by_rich_patch <- copio_rich_management_boxplot + oligo_rich_management_boxplot) 
 ```
 
 
- 
- 
+Test for differences in copiotrophic abundance among remnant and restoration soils.
+```{r}
+management_copio_abund_mixed_model <- glmer(cbind(bact_copio_abund, total_bact_abund) ~ management_type + (1|transect), 
+                             family = binomial,
+                             data = sample_data)
 
+resid_panel(copio_abund_management_mixed_model, smoother = TRUE, qqbands = TRUE)
+```
+```{r}
+summary(copio_abund_management_mixed_model)
+```
+
+
+```{r}
+Anova(copio_abund_management_mixed_model, type = 2)
+```
+P-value is well below the 0.05 threshold. Copiotrophic richness is very different among remnant and restoration soils.
+
+
+Test for differences in oligotrophic abundance among remnant and restoration soils.
+```{r}
+oligo_abund_management_mixed_model <- glmer(cbind(bact_oligo_abund, total_bact_abund) ~ management_type + (1|transect), 
+                             family = binomial,
+                             data = sample_data)
+
+oligo_abund_management_model <- glm(cbind(bact_oligo_abund, total_bact_abund) ~ management_type, 
+                             family = binomial,
+                             data = sample_data)
+
+resid_panel(oligo_abund_management_model, smoother = TRUE, qqbands = TRUE)
+```
+
+```{r}
+summary(oligo_abund_management_model)
+```
+P-value is well below the 0.05 threshold. Oligotrophic richness is very different among remnant and restoration soils.
+
+
+Figures of copiotrophic and oligotrophic abundance among remnant and restoration soils.
+```{r}
+copio_abund_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = bact_copio_abund_prop)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  xlab("\nLand management type") + 
+  ylab("Proportion copiotrophic (abundance)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none")
+
+oligo_abund_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = bact_oligo_abund_prop)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  scale_y_continuous(breaks = c(0.46, 0.48, 0.50, 0.52, 0.54)) +
+  xlab("\nLand management type") + 
+  ylab("Proportion oligotrophic (abundance)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none")
+```
+
+Arrange figures side-by-side.
+```{r}
+management_by_abund_patch <- copio_abund_management_boxplot + oligo_abund_management_boxplot
+```
+
+
+```{r}
+(management_by_rich_patch/management_by_abund_patch)
+```
+
+
+
+#### Hypothesis 1B
+
+Test for differences in beta-glucosidase rates among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$BG_nmol_g_hr)
+normalTest(sample_data$BG_nmol_g_hr, method = c("sw"))
+```
+
+```{r}
+plotNormalHistogram(log(sample_data$BG_nmol_g_hr))
+normalTest(log(sample_data$BG_nmol_g_hr), method = c("sw"))
+
+sample_data <- sample_data %>% 
+  mutate(BG_nmol_g_hr_log = log(BG_nmol_g_hr)) %>% 
+  relocate(BG_nmol_g_hr_log, .after = BG_nmol_g_hr)
+```
+
+```{r}
+BG_management_mixed_mod <- lmer(BG_nmol_g_hr_log ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+plot(BG_management_mixed_mod)
+```
+
+```{r}
+summary(BG_management_mixed_mod)
+```
+
+```{r}
+Anova(BG_management_mixed_mod, type = 2)
+```
+
+
+Test for differences in cellobiohydrolase rates among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$CBH_nmol_g_hr)
+normalTest(sample_data$CBH_nmol_g_hr, method = c("sw"))
+```
+
+```{r}
+CBH_management_mixed_mod <- lmer(CBH_nmol_g_hr ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+
+plot(CBH_management_mixed_mod)
+```
+
+```{r}
+summary(CBH_management_mixed_mod)
+```
+
+```{r}
+Anova(CBH_management_mixed_mod, type = 2)
+```
+p-value is well above the 0.05 threshold. Cellulose degradation rates are very similar among remnant and restoration soils.
+
+
+
+Test for differences in N-acetyl-ϐ-D-glucosaminidase rates among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$NAG_nmol_g_hr)
+normalTest(sample_data$NAG_nmol_g_hr, method = c("sw"))
+
+plotNormalHistogram(log(sample_data$NAG_nmol_g_hr))
+normalTest(log(sample_data$NAG_nmol_g_hr), method = c("sw"))
+```
+
+```{r}
+sample_data <- sample_data %>% 
+  mutate(NAG_nmol_g_hr_log = log(NAG_nmol_g_hr)) %>% 
+  relocate(NAG_nmol_g_hr_log, .after = NAG_nmol_g_hr)
+```
+
+```{r}
+NAG_management_mixed_mod <- lmer(NAG_nmol_g_hr_log ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+plot(NAG_management_mixed_mod)
+```
+
+```{r}
+summary(NAG_management_mixed_mod)
+```
+
+```{r}
+Anova(NAG_management_mixed_mod, type = 2)
+```
+p-value is slightly above the 0.05 threshold. Chitin degradation rates are slightly higher in remnant compared to restoration soils.
+
+
+```{r}
+(NAG_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = NAG_nmol_g_hr)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  scale_y_continuous(breaks = c(50, 100, 150, 200, 250)) +
+  xlab("\nLand management type") + 
+  ylab("NAG (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+
+Test for differences in beta-xylosidase rates among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$BX_nmol_g_hr)
+normalTest(sample_data$BX_nmol_g_hr, method = c("sw"))
+plotNormalHistogram(log(sample_data$BX_nmol_g_hr))
+```
+
+```{r}
+BX_management_mixed_mod <- glmer(BX_nmol_g_hr ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+plot(BX_management_mixed_mod)
+```
+
+```{r}
+summary(BX_management_mixed_mod)
+```
+
+```{r}
+Anova(BX_management_mixed_mod, type = 2)
+```
+p-values is below the 0.05 threshold. Hemicellulose degradation rates are greater in remnant compared to restoration soils.
+
+```{r}
+(BX_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = BX_nmol_g_hr)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  scale_y_continuous(breaks = c(30, 60, 90, 120)) +
+  xlab("\nLand management type") + 
+  ylab("BX (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+
+Test for differences in alpha-glucosidase rates among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$AG_nmol_g_hr)
+normalTest(sample_data$AG_nmol_g_hr, method = c("sw"))
+```
+
+```{r}
+sample_data <- sample_data %>% 
+  mutate(AG_nmol_g_hr_transformed = AG_nmol_g_hr + 20) %>% 
+  relocate(AG_nmol_g_hr_transformed, .after = AG_nmol_g_hr)
+```
+
+```{r}
+plotNormalHistogram(sample_data$AG_nmol_g_hr_transformed)
+normalTest(sample_data$AG_nmol_g_hr_transformed, method = c("sw"))
+plotNormalHistogram(log(sample_data$AG_nmol_g_hr_transformed))
+normalTest(log(sample_data$AG_nmol_g_hr_transformed), method = c("sw"))
+```
+
+```{r}
+AG_management_mixed_mod <- lmer(AG_nmol_g_hr_transformed ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+plot(AG_management_mixed_mod)
+```
+
+```{r}
+summary(AG_management_mixed_mod)
+```
+
+```{r}
+Anova(AG_management_mixed_mod, type = 2)
+```
+p-value is well above the 0.05 threshold. Glucose degradation rates are very similar among remnant and restoration soils.
+
+
+Test for differences in leucine aminopeptidase among remnant and restoration soils.
+```{r}
+plotNormalHistogram(sample_data$LAP_nmol_g_hr)
+normalTest(sample_data$LAP_nmol_g_hr, method = c("sw"))
+```
+
+```{r}
+sample_data <- sample_data %>% 
+  mutate(LAP_nmol_g_hr_transformed = LAP_nmol_g_hr + 30) %>% 
+  relocate(LAP_nmol_g_hr_transformed, .after = LAP_nmol_g_hr)
+```
+
+```{r}
+plotNormalHistogram(sample_data$LAP_nmol_g_hr_transformed)
+normalTest(sample_data$LAP_nmol_g_hr_transformed, method = c("sw"))
+plotNormalHistogram(log(sample_data$LAP_nmol_g_hr_transformed))
+normalTest(log(sample_data$LAP_nmol_g_hr_transformed), method = c("sw"))
+```
+
+```{r}
+LAP_management_mixed_mod <- glmer(LAP_nmol_g_hr_transformed ~ management_type + (1|habitat_type_google_maps) + (1|transect), data = sample_data)
+plot(LAP_management_mixed_mod)
+```
+
+```{r}
+summary(LAP_management_mixed_mod)
+```
+
+```{r}
+Anova(LAP_management_mixed_mod, type = 2)
+```
+p-value is well above the 0.05 threshold. Protein degradation rates are very similar among remnant and restoration soils.
+
+
+```{r}
+(CBH_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = CBH_nmol_g_hr)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  scale_y_continuous(breaks = c(50, 100, 150, 200, 250)) +
+  xlab("\nLand management type") + 
+  ylab("BG (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+```{r}
+(AG_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = AG_nmol_g_hr_transformed)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  xlab("\nLand management type") + 
+  ylab("AG (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+```{r}
+(BG_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = BG_nmol_g_hr)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  xlab("\nLand management type") + 
+  ylab("BG (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+```{r}
+(LAP_management_boxplot <- ggplot(sample_data, aes(x = management_type, y = LAP_nmol_g_hr_transformed)) +
+  geom_boxplot(aes(fill = management_type), width = 0.5, lwd = 0.5) +
+  scale_fill_manual(values = c("#4363d8", "darkgoldenrod1")) +
+  xlab("\nLand management type") + 
+  ylab("LAP (nmol per g per hour)") +
+  theme_classic(base_size = 10, base_family = "") +
+  theme(panel.border = element_rect(linetype = "solid", fill = NA, linewidth = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "plain", color = "black", size = 12),
+        axis.text.y = element_text(face = "plain", color = "black", size = 14),
+        axis.ticks.length = unit(0.15, "cm"),
+        axis.ticks.x = element_blank(),
+        axis.line = element_line(linewidth = 0.5),
+        legend.position = "none"))
+```
+
+```{r}
+(enzyme_management_top_panel_figs <- BX_management_boxplot + NAG_management_boxplot)
+(enzyme_management_bottom_panel_figs <- AG_management_boxplot + BG_management_boxplot + CBH_management_boxplot)
+(enzyme_management_figs <- enzyme_management_top_panel_figs/enzyme_management_bottom_panel_figs)
+```
+
+What microbes are important for hemicellulose and chitin degradation?
+
+
+
+#### Hypothesis 3 
+Richness and/or abundance of copiotrophic, oligotrophic taxa are correlated to carbon substrate degradation rates.
+
+Alpha-glucosidase
+```{r}
+copio_rich_AG_mixed_mod <- lmer(AG_nmol_g_hr_transformed ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_AG_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_AG_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_AG_mixed_mod, type = 2)
+```
+
+
+
+```{r}
+copio_abund_AG_mixed_mod <- lmer(AG_nmol_g_hr_transformed ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_AG_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_AG_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_AG_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_rich_AG_mixed_mod <- lmer(AG_nmol_g_hr_transformed ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_AG_mixed_mod)
+```
+
+```{r}
+summary(oligo_rich_AG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_AG_mixed_mod, type = 2)
+```
+
+
+```{r}
+oligo_abund_AG_mixed_mod <- lmer(AG_nmol_g_hr_transformed ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_abund_AG_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_AG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_AG_mixed_mod, type = 2)
+```
+
+
+
+Beta-glucosidase
+```{r}
+copio_rich_BG_mixed_mod <- lmer(BG_nmol_g_hr_log ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_BG_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_BG_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_BG_mixed_mod, type = 2)
+```
+
+```{r}
+copio_abund_BG_mixed_mod <- lmer(BG_nmol_g_hr_log ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_BG_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_BG_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_BG_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_rich_BG_mixed_mod <- lmer(BG_nmol_g_hr_log ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_BG_mixed_mod)
+```
+
+```{r}
+summary(oligo_rich_BG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_BG_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_BG_mixed_mod <- lmer(BG_nmol_g_hr_log ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_abund_BG_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_BG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_BG_mixed_mod, type = 2)
+```
+
+
+Cellobiohydrolase
+```{r}
+copio_rich_CBH_mixed_mod <- lmer(CBH_nmol_g_hr ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_CBH_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_CBH_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_CBH_mixed_mod, type = 2)
+```
+
+
+```{r}
+copio_abund_CBH_mixed_mod <- lmer(CBH_nmol_g_hr ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_CBH_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_CBH_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_CBH_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_rich_CBH_mixed_mod <- lmer(CBH_nmol_g_hr ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_CBH_mixed_mod)
+```
+
+
+```{r}
+summary(oligo_rich_CBH_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_CBH_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_CBH_mixed_mod <- lmer(CBH_nmol_g_hr ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_CBH_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_CBH_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_CBH_mixed_mod, type = 2)
+```
+
+
+Beta-xylosidase
+```{r}
+copio_rich_BX_mixed_mod <- glmer(BX_nmol_g_hr ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_BX_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_BX_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_BX_mixed_mod, type = 2)
+```
+
+```{r}
+copio_abund_BX_mixed_mod <- glmer(BX_nmol_g_hr ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_BX_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_BX_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_BX_mixed_mod, type = 2)
+```
+
+```{r}
+model_performance(copio_abund_BX_mixed_mod)
+```
+
+
+```{r}
+cor.test(sample_data$bact_copio_abund_prop, sample_data$BX_nmol_g_hr)
+```
+
+```{r}
+copio_abund_BX_scatterplot <- ggplot(sample_data, aes(x = bact_copio_abund_prop, y = BX_nmol_g_hr)) +
+    geom_smooth(method = "lm", color = "grey50") + 
+    geom_point(shape = 21, size = 2, stroke = 0.75) +
+    xlab("Proportion copiotrophic (abundance)") + 
+    ylab("BX") +
+    theme_classic(base_size = 10, base_family = "") +
+    theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_blank(),
+          axis.text.x = element_text(face = "plain", color = "black", size = 8),
+          axis.text.y = element_text(face = "plain", color = "black", size = 10),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.line = element_line(size = 0.5),
+          legend.position = "none")
+```
+
+
+```{r}
+oligo_rich_BX_mixed_mod <- glmer(BX_nmol_g_hr ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_BX_mixed_mod)
+```
+
+```{r}
+summary(oligo_rich_BX_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_BX_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_BX_mixed_mod <- glmer(BX_nmol_g_hr ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_abund_BX_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_BX_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_BX_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_BX_scatterplot <- ggplot(sample_data, aes(x = bact_oligo_abund_prop, y = BX_nmol_g_hr)) +
+    geom_point(shape = 21, size = 2, stroke = 0.75) +
+    xlab("Proportion oligotrophic (abundance)") + 
+    ylab("BX") +
+    theme_classic(base_size = 10, base_family = "") +
+    theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_blank(),
+          axis.text.x = element_text(face = "plain", color = "black", size = 8),
+          axis.text.y = element_text(face = "plain", color = "black", size = 10),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.line = element_line(size = 0.5),
+          legend.position = "none")
+```
+
+
+
+N-acetyl-ϐ-D-glucosaminidase
+```{r}
+copio_rich_NAG_mixed_mod <- lmer(NAG_nmol_g_hr_log ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_NAG_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_NAG_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_NAG_mixed_mod, type = 2)
+```
+
+```{r}
+copio_abund_NAG_mixed_mod <- lmer(NAG_nmol_g_hr_log ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_NAG_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_NAG_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_NAG_mixed_mod, type = 2)
+```
+
+```{r}
+model_performance(copio_abund_NAG_mixed_mod)
+```
+
+
+```{r}
+oligo_rich_NAG_mixed_mod <- lmer(NAG_nmol_g_hr_log ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_NAG_mixed_mod)
+```
+
+```{r}
+summary(oligo_rich_NAG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_NAG_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_NAG_mixed_mod <- lmer(NAG_nmol_g_hr_log ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_abund_NAG_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_NAG_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_NAG_mixed_mod, type = 2)
+```
+
+```{r}
+copio_abund_NAG_scatterplot <- ggplot(sample_data, aes(x = bact_copio_abund_prop, y = NAG_nmol_g_hr)) +
+    geom_smooth(method = "lm", color = "grey50") + 
+    geom_point(shape = 21, size = 2, stroke = 0.75) +
+    scale_y_continuous(breaks = c(0, 50, 100, 150, 200, 250)) +
+    xlab("Proportion copiotrophic (abundance)") + 
+    ylab("NAG") +
+    theme_classic(base_size = 10, base_family = "") +
+    theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_blank(),
+          axis.text.x = element_text(face = "plain", color = "black", size = 8),
+          axis.text.y = element_text(face = "plain", color = "black", size = 10),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.line = element_line(size = 0.5),
+          legend.position = "none")
+```
+
+
+```{r}
+oligo_abund_NAG_scatterplot <- ggplot(sample_data, aes(x = bact_oligo_abund_prop, y = NAG_nmol_g_hr)) +
+    geom_point(shape = 21, size = 2, stroke = 0.75) +
+    scale_y_continuous(breaks = c(0, 50, 100, 150, 200, 250)) +
+    xlab("Proportion oligotrophic (abundance)") + 
+    ylab("NAG") +
+    theme_classic(base_size = 10, base_family = "") +
+    theme(panel.border = element_rect(linetype = "solid", fill = NA, size = 1),
+          axis.title = element_blank(),
+          axis.text.x = element_text(face = "plain", color = "black", size = 8),
+          axis.text.y = element_text(face = "plain", color = "black", size = 10),
+          axis.ticks.length = unit(0.15, "cm"),
+          axis.line = element_line(size = 0.5),
+          legend.position = "none")
+```
+
+
+```{r}
+(copio_abund_BX_scatterplot + copio_abund_NAG_scatterplot)/(oligo_abund_BX_scatterplot + oligo_abund_NAG_scatterplot)
+```
+
+
+Leucine aminopeptidase
+```{r}
+copio_rich_LAP_mixed_mod <- glmer(LAP_nmol_g_hr_transformed ~ bact_copio_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_rich_LAP_mixed_mod)
+```
+
+```{r}
+summary(copio_rich_LAP_mixed_mod)
+```
+
+```{r}
+Anova(copio_rich_LAP_mixed_mod, type = 2)
+```
+
+```{r}
+copio_abund_LAP_mixed_mod <- glmer(LAP_nmol_g_hr_transformed ~ bact_copio_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(copio_abund_LAP_mixed_mod)
+```
+
+```{r}
+summary(copio_abund_LAP_mixed_mod)
+```
+
+```{r}
+Anova(copio_abund_LAP_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_rich_LAP_mixed_mod <- glmer(LAP_nmol_g_hr_transformed ~ bact_oligo_rich_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_rich_LAP_mixed_mod)
+```
+
+```{r}
+summary(oligo_rich_LAP_mixed_mod)
+```
+
+```{r}
+Anova(oligo_rich_LAP_mixed_mod, type = 2)
+```
+
+```{r}
+oligo_abund_LAP_mixed_mod <- glmer(LAP_nmol_g_hr_transformed ~ bact_oligo_abund_prop + (1|management_type) + (1|habitat_type_google_maps), data = sample_data)
+
+plot(oligo_abund_LAP_mixed_mod)
+```
+
+```{r}
+summary(oligo_abund_LAP_mixed_mod)
+```
+
+```{r}
+Anova(oligo_abund_LAP_mixed_mod, type = 2)
+```
 
